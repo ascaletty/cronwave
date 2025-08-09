@@ -1,0 +1,6 @@
+work_days:
+  - Monday:[8,20]
+  - Tuesday
+  - Wednesday
+holidays:
+  - 2023-12-25
