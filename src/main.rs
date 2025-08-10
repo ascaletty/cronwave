@@ -5,14 +5,19 @@ use iso8601::Duration as isoDuration;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::Deserialize;
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
+use std::fs::{self, File};
+use std::io::{BufReader, BufWriter, PipeReader, Read, Write};
+use std::ops::Deref;
 use std::process::Command;
 use std::str::FromStr;
+use std::string;
 use std::sync::Mutex;
 use uuid::Uuid;
 
 use crate::config::ConfigInfo;
+struct Calendar {
+    vevent_vec: Vec<TimeBlock>,
+}
 mod config;
 #[derive(Debug, Clone)]
 pub struct Task {
@@ -43,6 +48,19 @@ pub struct TimeBlockRaw {
     dtstamp: String,
 }
 
+#[derive(Debug)]
+enum EventTypes {
+    VEVENT,
+    VTODO,
+    VALARM,
+    VCALENDAR,
+}
+#[derive(Debug)]
+struct StringBlock {
+    name: EventTypes,
+    block: Vec<String>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct TimeBlock {
     dtstart: chrono::DateTime<Local>,
@@ -54,15 +72,14 @@ pub struct TimeBlock {
 
 fn create_caldav_events(
     scheduled: Vec<TimeBlock>,
-    not_scheduled: Vec<TimeBlock>,
     config_data: ConfigInfo,
     blocks: Mutex<Vec<TimeBlock>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut string_vec = vec!["BEGIN:VCALENDAR".to_string()];
+
+    println!("scheduled{:?}", scheduled);
+
     for event in scheduled {
-        blocks.lock().unwrap().push(event);
-    }
-    for event in not_scheduled {
         blocks.lock().unwrap().push(event);
     }
     for event in blocks.into_inner().unwrap() {
@@ -151,100 +168,110 @@ fn convert_raw_blocks(blocks: Vec<TimeBlockRaw>) -> Vec<TimeBlock> {
 }
 fn ical_basic_to_dtlocal(ical_dt: &str) -> DateTime<Local> {
     let s = ical_dt.trim();
-    let is_utc = s.ends_with('Z');
 
-    let core = if is_utc { &s[..s.len() - 1] } else { s };
-
-    if core.len() != 15 || !core.contains('T') {
-        panic!("Invalid iCalendar datetime: {s}");
+    // UTC (ends with 'Z'), e.g. "20250806T195556Z"
+    if s.ends_with('Z') {
+        let core = &s[..s.len() - 1]; // drop the Z
+        let naive = NaiveDateTime::parse_from_str(core, "%Y%m%dT%H%M%S")
+            .expect(&format!("invalid UTC datetime: {}", s));
+        // parse as UTC then convert to Local (important!)
+        let utc_dt = DateTime::<Utc>::from_utc(naive, Utc);
+        return utc_dt.with_timezone(&Local);
     }
 
-    let date = &core[0..8]; // YYYYMMDD
-    let time = &core[9..15]; // HHMMSS
-
-    let rfc = format!(
-        "{}-{}-{}T{}:{}:{}",
-        &date[0..4],
-        &date[4..6],
-        &date[6..8],
-        &time[0..2],
-        &time[2..4],
-        &time[4..6]
-    );
-
-    if is_utc {
-        DateTime::from_str(&format!("{rfc}Z")).expect("failed to get datetime")
-    } else {
-        Local
-            .from_local_datetime(&NaiveDateTime::from_str(&rfc).unwrap())
-            .unwrap()
+    // Floating/local datetime (no Z), e.g. "20250806T160000"
+    if s.len() == 15 && s.contains('T') {
+        let naive = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
+            .expect(&format!("invalid local datetime: {}", s));
+        // from_local_datetime returns a LocalResult; .single() ensures we get a single mapping
+        return Local
+            .from_local_datetime(&naive)
+            .single()
+            .expect("ambiguous or nonexistent local datetime");
     }
+
+    // All-day DATE (YYYYMMDD)
+    if s.len() == 8 {
+        let naive_date = NaiveDate::parse_from_str(s, "%Y%m%d")
+            .expect(&format!("invalid date-only DTSTART: {}", s));
+        let naive_dt = naive_date.and_hms(0, 0, 0);
+        return Local
+            .from_local_datetime(&naive_dt)
+            .single()
+            .expect("ambiguous local date");
+    }
+
+    panic!("Unsupported iCalendar datetime format: '{}'", s);
 }
+
 fn schedule(tasks: Mutex<Vec<Task>>, config_data: ConfigInfo, blocks: Mutex<Vec<TimeBlock>>) {
     let blocks_copy = {
         let guard = blocks.lock().unwrap();
         guard.clone()
     };
+    print!("blocks{:?}", blocks_copy);
 
     let mut scheduled = vec![];
-    let mut not_scheduled = vec![];
+    let tasks_copy = {
+        let guard = tasks.lock().unwrap();
+        guard.clone()
+    };
+    println!("TASKS COPY");
 
+    println!("tasks_copy mutex gaurd {:?}", tasks_copy);
+    println!("");
     for block in &blocks_copy {
         let current_time = Local::now();
         let time_til = block.dtstart - current_time;
 
-        let tasks_copy = {
-            let guard = tasks.lock().unwrap();
-            guard.clone()
-        };
-
-        let mut remaining_tasks = vec![];
-
-        for task in tasks_copy {
-            if task.uuid == block.uid {
-                if task.estimated <= time_til {
-                    scheduled.push(TimeBlock {
-                        duration: task.estimated,
-                        dtstart: block.dtstart,
-                        uid: Uuid::new_v4().to_string(),
-                        dtstamp: Local::now(),
-                        summary: task.description.clone(),
-                    });
-                } else {
-                    remaining_tasks.push(task);
-                }
+        let mut i = 0;
+        for task in tasks_copy.clone() {
+            if task.estimated <= time_til {
+                scheduled.push(TimeBlock {
+                    duration: task.estimated,
+                    dtstart: block.dtstart,
+                    uid: task.uuid,
+                    dtstamp: Local::now(),
+                    summary: task.description.clone(),
+                });
+                tasks.lock().unwrap().remove(i);
             }
-        }
-
-        {
-            let mut guard = tasks.lock().unwrap();
-            *guard = remaining_tasks;
+            i += 1;
         }
     }
-
     let last_block_time = {
         let guard = blocks.lock().unwrap();
-        let last = guard.last().unwrap();
-        last.dtstamp + last.duration
+        let last = guard
+            .last()
+            .unwrap_or(&TimeBlock {
+                dtstart: Local::now(),
+                dtstamp: Local::now(),
+                duration: Duration::zero(),
+                summary: "".to_string(),
+                uid: Uuid::new_v4().to_string(),
+            })
+            .dtstart;
+        last + guard
+            .last()
+            .unwrap_or(&TimeBlock {
+                dtstart: Local::now(),
+                dtstamp: Local::now(),
+                duration: Duration::zero(),
+                summary: "".to_string(),
+                uid: Uuid::new_v4().to_string(),
+            })
+            .duration
     };
-
-    let tasks_remaining = {
-        let guard = tasks.lock().unwrap();
-        guard.clone()
-    };
-    for task in tasks_remaining {
-        not_scheduled.push(TimeBlock {
-            duration: task.estimated,
+    for task_left in tasks.lock().unwrap().iter() {
+        scheduled.push(TimeBlock {
+            duration: task_left.estimated,
             dtstart: last_block_time,
-            uid: Uuid::new_v4().to_string(),
+            uid: task_left.uuid.clone(),
             dtstamp: Local::now(),
-            summary: task.description,
+            summary: task_left.description.clone(),
         });
     }
-
-    // Now call without holding any lock
-    create_caldav_events(scheduled, not_scheduled, config_data, blocks)
-        .expect("failed to create_caldav_events");
+    create_caldav_events(scheduled, config_data, blocks).expect("failed to create_caldav_events");
 }
 
 fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
@@ -279,6 +306,9 @@ fn fetch_tasks() -> Vec<Task> {
     }
 
     output.sort_by(|a, b| a.urgency.partial_cmp(&b.urgency).unwrap());
+    println!("TASKS OUTPUT");
+    println!("output of fetch tasks{:?}", output);
+
     output
 }
 fn fetch_ical_text(config_data: ConfigInfo) {
@@ -290,6 +320,7 @@ fn fetch_ical_text(config_data: ConfigInfo) {
         .expect("failed to fetch ical");
     let school = File::create("school.ics").unwrap();
     let mut writer = BufWriter::new(school);
+    // println!("Writen the ics{:?}", response.text());
     writer
         .write_all(String::from_utf8_lossy(response.text().unwrap().as_bytes()).as_bytes())
         .expect("failed to write ics");
@@ -300,45 +331,132 @@ fn clean_ics_value(v: String) -> String {
         .replace("\\;", ";")
         .replace("\\\\", "\\")
 }
-fn parse_text_blocks() -> Vec<TimeBlock> {
-    let mut timeblock_vec = vec![];
-    let buf = BufReader::new(File::open("school.ics").expect("couldn't open school.ics"));
-    let icalparser = IcalParser::new(buf);
+fn parse_text_blocks() -> Vec<Vec<String>> {
+    print!("can we get much higher");
 
-    for calendar in icalparser {
-        let calendar_parse = calendar.expect("failed to parse calendar");
-
-        for event in calendar_parse.events {
-            let mut start = String::new();
-            let mut duration = String::new();
-            let mut uid = String::new();
-            let mut summary = String::new();
-            let mut dtstamp = String::new();
-
-            for property in event.properties {
-                match property.name.as_str() {
-                    "DTSTART" => start = clean_ics_value(property.value.unwrap_or_default()),
-                    "DURATION" => duration = clean_ics_value(property.value.unwrap_or_default()),
-                    "UID" => uid = clean_ics_value(property.value.unwrap_or_default()),
-                    "SUMMARY" => summary = clean_ics_value(property.value.unwrap_or_default()),
-                    "DTSTAMP" => dtstamp = clean_ics_value(property.value.unwrap_or_default()),
-                    _ => {}
-                }
+    let contents = fs::read_to_string("school.ics").expect("failed to read school.ics");
+    let mut start = String::new();
+    let mut duration = String::new();
+    let mut summary = String::new();
+    let mut dtstamp = String::new();
+    let mut uid = String::new();
+    let mut splits = vec![];
+    let mut i = 0;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Split into key and value by first ':'
+        let mut parts = line.splitn(2, ':');
+        let key = parts.next().unwrap_or("");
+        let value = parts.next().unwrap_or("");
+        match key {
+            "BEGIN" => {
+                let start_event = value.to_string();
+                let formatted_string = format!("B:{}:{}", i, start_event);
+                splits.push(formatted_string);
             }
+            "END" => {
+                let end_event = value.to_string();
+                let formatted_string = format!("E:{}:{}", i, end_event);
+                splits.push(formatted_string);
+            }
+            _ => print!(""),
+        }
+        i += 1;
+    }
+    println!("splits{:?}", splits);
+    let mut sections: Vec<StringBlock> = vec![];
+    let mut splits_iter = splits.iter();
 
-            let block = TimeBlockRaw {
-                dtstart: start,
-                duration,
-                uid,
-                summary,
-                dtstamp,
+    for line in splits {
+        let event_val: Vec<&str> = line.split(':').collect();
+        if let start_or_end = event_val.get(0).unwrap() == "B" {
+            let event_start: usize = event_val.iter().nth(1).unwrap().parse().unwrap();
+            let event_name_raw = event_val.iter().nth(2).unwrap();
+            let event_name = match event_name_raw.deref() {
+                "VCALENDAR" => EventTypes::VCALENDAR,
+                "VEVENT" => EventTypes::VEVENT,
+                "VTODO" => EventTypes::VTODO,
+                "VALARM" => EventTypes::VALARM,
+                _ => panic!("unknown event type"),
             };
-
-            timeblock_vec.push(block);
+            let event_end = splits_iter
+                .clone()
+                .position(|x| {
+                    x.split(":").into_iter().nth(2).unwrap() == event_name_raw.to_string()
+                })
+                .expect("couldnt find matching event end");
+            let block = contents
+                .lines()
+                .take(event_end - event_start)
+                .map(|line| line.to_string())
+                .collect();
+            let new_block = StringBlock {
+                name: event_name,
+                block,
+            };
+            sections.push(new_block);
         }
     }
+    let mut vevent_vec = vec![];
+    println!("sections{:?}", sections);
+    for section in sections {
+        match section.name {
+            EventTypes::VEVENT => vevent_vec.push(section.block),
+            EventTypes::VCALENDAR => println!("found a calendar"),
+            EventTypes::VTODO => println!("found a todo"),
+            EventTypes::VALARM => println!("found an alarm"),
+        }
+    }
+    vevent_vec
+}
+fn parse_vevent(event_vec: Vec<Vec<String>>) -> Mutex<Vec<TimeBlock>> {
+    let mut timeblock_vec_raw = vec![];
+    println!("event vec strings{:?}", event_vec);
+    let mut start = String::new();
+    let mut summary = String::new();
+    let mut uid = String::new();
+    let mut duration = String::new();
+    let mut dtstamp = String::new();
+    let block_mutex: Mutex<Vec<TimeBlock>> = Mutex::new(Vec::new());
+    for event in event_vec {
+        for line in event.iter() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            // Split into key and value by first ':'
+            let mut parts = line.splitn(2, ':');
+            let key = parts.next().unwrap_or("");
+            let value = parts.next().unwrap_or("");
 
-    convert_raw_blocks(timeblock_vec)
+            match key {
+                "DTSTART" => start = value.to_string(),
+                "SUMMARY" => summary = value.to_string(),
+                "UID" => uid = value.to_string(),
+                "DURATION" => duration = value.to_string(),
+                "DTSTAMP" => dtstamp = value.to_string(),
+                _ => println!("Other key: {}, value: {}", key, value),
+            }
+        }
+        let new_block = TimeBlockRaw {
+            dtstart: start.clone(),
+            summary: summary.clone(),
+            uid: uid.clone(),
+            duration: duration.clone(),
+            dtstamp: dtstamp.clone(),
+        };
+        timeblock_vec_raw.push(new_block);
+    }
+    let serialized_block_vec = convert_raw_blocks(timeblock_vec_raw);
+    for block in serialized_block_vec {
+        block_mutex.lock().unwrap().push(block);
+    }
+    println!("BLOCK Mutex \n");
+    println!("{:?}", block_mutex);
+    block_mutex
 }
 
 fn main() {
@@ -346,6 +464,7 @@ fn main() {
 
     let config_data = Mutex::new(config_info.expect("failed to get config info"));
     let tasks = Mutex::new(fetch_tasks());
+    println!("\n, \n, TASKS, \n, {:?}", tasks);
     fetch_ical_text(
         config_data
             .lock()
@@ -353,7 +472,8 @@ fn main() {
             .auth
             .clone(),
     );
-    let blocks_vec = Mutex::new(parse_text_blocks());
+    let vevent_string_vec = parse_text_blocks();
+    let vevent_mutex = parse_vevent(vevent_string_vec);
     schedule(
         tasks,
         config_data
@@ -361,6 +481,6 @@ fn main() {
             .expect("failed to unlock mutex")
             .auth
             .clone(),
-        blocks_vec,
+        vevent_mutex,
     );
 }
