@@ -32,13 +32,16 @@ fn convert_raw_blocks(blocks: Vec<TimeBlockRaw>) -> Vec<TimeBlock> {
             dtstart: match block.dtstart {
                 DatePerhapsTime::DateTime(start) => match start {
                     CalendarDateTime::Floating(float) => {
+                        println!("found starttime is naivedatetime");
                         Local::from_local_datetime(&Local, &float).unwrap()
                     }
                     CalendarDateTime::Utc(utc) => {
+                        println!("found starttime is UTC");
                         let utc_time = utc.naive_utc();
                         Local::from_utc_datetime(&Local, &utc_time)
                     }
                     CalendarDateTime::WithTimezone { date_time, tzid } => {
+                        println!("found starttime is date_tiem with timezone");
                         let tz: chrono_tz::Tz = tzid.parse().unwrap();
                         Local::from_local_datetime(&Local, &date_time).unwrap()
                     }
