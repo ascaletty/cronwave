@@ -49,7 +49,7 @@ pub struct TimeBlockRaw {
 }
 #[derive(Debug, Deserialize, Clone)]
 pub struct TimeBlock {
-    dtstart: chrono::DateTime<Utc>,
+    dtstart: chrono::DateTime<Local>,
     duration: Duration,
     uid: String,
     summary: String,
@@ -68,18 +68,37 @@ fn create_caldav_events(
     for event in scheduled {
         blocks.lock().unwrap().push(event);
     }
-    let mut new_event = Event::new();
-    let mut my_cal = icalendar::Calendar::new();
     for event in blocks.into_inner().unwrap() {
-        new_event
-            .summary(event.summary.as_str())
-            .starts(event.dtstart)
-            .timestamp(event.dtstamp)
-            .ends(event.dtstart + event.duration);
-        print!("{:?}", new_event);
-        my_cal.push(new_event.clone());
+        let ics = format!(
+            "
+BEGIN:VEVENT\r
+UID:{uid}\r
+DTSTAMP:{now}\r
+DTSTART:{dtstart}\r
+DURATION:{duration}\r
+SUMMARY:{summary}\r
+END:VEVENT\r",
+            uid = event.uid,
+            now = event.dtstamp.format("%Y%m%dT%H%M%SZ"),
+            dtstart = event.dtstart.format("%Y%m%dT%H%M%SZ"),
+            duration = iso8601::Duration::YMDHMS {
+                year: 0,
+                month: 0,
+                day: 0,
+                hour: u32::from_str(&event.duration.num_hours().to_string()).unwrap_or(0),
+                minute: 0,
+                second: 0,
+                millisecond: 0,
+            }
+            .to_string(),
+            summary = event.summary,
+        )
+        .to_string();
+        string_vec.push(ics);
     }
-    println!("{:?}", my_cal.to_string());
+    string_vec.push("END:VCALENDAR\r".to_string());
+    let combined = string_vec.join("\n");
+    println!("combined: \n {combined}");
 
     // Set up HTTP client and headers
     let mut headers = HeaderMap::new();
@@ -92,7 +111,7 @@ fn create_caldav_events(
         .put(config_data.cal_url)
         .basic_auth(config_data.cal_username, Some(config_data.cal_pass))
         .headers(headers)
-        .body(my_cal.to_string())
+        .body(combined)
         .send()?;
 
     if response.status().is_success() {
@@ -119,9 +138,9 @@ fn schedule(tasks: Mutex<Vec<Task>>, config_data: ConfigInfo, blocks: Mutex<Vec<
     println!("TASKS COPY");
 
     println!("tasks_copy mutex gaurd {:?}", tasks_copy);
-    println!("");
     for block in &blocks_copy {
-        let current_time = Utc::now();
+        let current_time = Local::now();
+        println!("time is {}", current_time);
         let time_til = block.dtstart - current_time;
 
         let mut i = 0;
@@ -134,7 +153,9 @@ fn schedule(tasks: Mutex<Vec<Task>>, config_data: ConfigInfo, blocks: Mutex<Vec<
                     dtstamp: Utc::now(),
                     summary: task.description.clone(),
                 });
-                tasks.lock().unwrap().remove(i);
+                if tasks.lock().unwrap().len() > 1 {
+                    tasks.lock().unwrap().remove(i);
+                }
             }
             i += 1;
         }
@@ -144,7 +165,7 @@ fn schedule(tasks: Mutex<Vec<Task>>, config_data: ConfigInfo, blocks: Mutex<Vec<
         let last = guard
             .last()
             .unwrap_or(&TimeBlock {
-                dtstart: Utc::now(),
+                dtstart: Local::now(),
                 dtstamp: Utc::now(),
                 duration: Duration::zero(),
                 summary: "".to_string(),
@@ -154,7 +175,7 @@ fn schedule(tasks: Mutex<Vec<Task>>, config_data: ConfigInfo, blocks: Mutex<Vec<
         last + guard
             .last()
             .unwrap_or(&TimeBlock {
-                dtstart: Utc::now(),
+                dtstart: Local::now(),
                 dtstamp: Utc::now(),
                 duration: Duration::zero(),
                 summary: "".to_string(),
