@@ -80,7 +80,7 @@ SUMMARY:{summary}\r
 END:VEVENT\r",
             uid = event.uid,
             now = event.dtstamp.format("%Y%m%dT%H%M%SZ"),
-            dtstart = event.dtstart.format("%Y%m%dT%H%M%SZ"),
+            dtstart = event.dtstart.format("%Y%m%dT%H%M%S"),
             duration = iso8601::Duration::YMDHMS {
                 year: 0,
                 month: 0,
@@ -131,33 +131,54 @@ fn schedule(tasks: Mutex<Vec<Task>>, config_data: ConfigInfo, blocks: Mutex<Vec<
     print!("blocks{:?}", blocks_copy);
 
     let mut scheduled = vec![];
-    let tasks_copy = {
+    let mut tasks_copy = {
         let guard = tasks.lock().unwrap();
         guard.clone()
     };
     println!("TASKS COPY");
 
     println!("tasks_copy mutex gaurd {:?}", tasks_copy);
+
+    let mut current_time = Local::now();
     for block in &blocks_copy {
-        let current_time = Local::now();
         println!("time is {}", current_time);
         let time_til = block.dtstart - current_time;
-
-        let mut i = 0;
-        for task in tasks_copy.clone() {
-            if task.estimated <= time_til {
-                scheduled.push(TimeBlock {
-                    duration: task.estimated,
-                    dtstart: block.dtstart,
-                    uid: task.uuid,
-                    dtstamp: Utc::now(),
-                    summary: task.description.clone(),
-                });
-                if tasks.lock().unwrap().len() > 1 {
-                    tasks.lock().unwrap().remove(i);
+        //if the time til
+        if time_til > Duration::zero() {
+            let mut i = 0;
+            for task in tasks_copy.clone() {
+                if task.estimated <= time_til {
+                    scheduled.push(TimeBlock {
+                        duration: task.estimated,
+                        dtstart: current_time,
+                        uid: task.uuid,
+                        dtstamp: Utc::now(),
+                        summary: task.description.clone(),
+                    });
+                    tasks_copy.remove(i);
+                    current_time += task.estimated;
                 }
+                i += 1;
             }
-            i += 1;
+        } else {
+            current_time = block.dtstart;
+            let mut i = 0;
+            for task in tasks_copy.clone() {
+                if task.estimated <= time_til {
+                    scheduled.push(TimeBlock {
+                        duration: task.estimated,
+                        dtstart: current_time,
+                        uid: task.uuid,
+                        dtstamp: Utc::now(),
+                        summary: task.description.clone(),
+                    });
+                    if tasks.lock().unwrap().len() > 1 {
+                        tasks.lock().unwrap().remove(i);
+                    }
+                    current_time += task.estimated;
+                }
+                i += 1;
+            }
         }
     }
     let last_block_time = {
