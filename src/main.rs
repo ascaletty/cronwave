@@ -10,7 +10,7 @@ use std::ops::Deref;
 use std::process::Command;
 use std::str::FromStr;
 use std::string;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use uuid::Uuid;
 
 use crate::config::ConfigInfo;
@@ -25,7 +25,7 @@ pub struct Task {
     description: String,
     due: DateTime<Utc>,
     estimated: Duration,
-    status: Option<String>,
+    status: String,
     urgency: f32,
 }
 
@@ -35,7 +35,7 @@ pub struct RawTask {
     description: String,
     due: Option<String>,
     estimated: Option<String>,
-    status: Option<String>,
+    status: String,
     urgency: f32,
 }
 
@@ -57,18 +57,12 @@ pub struct TimeBlock {
 }
 
 fn create_caldav_events(
-    scheduled: Vec<TimeBlock>,
     config_data: ConfigInfo,
-    blocks: Mutex<Vec<TimeBlock>>,
+    blocks: MutexGuard<'_, Vec<TimeBlock>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut string_vec = vec!["BEGIN:VCALENDAR".to_string()];
 
-    println!("scheduled{:?}", scheduled);
-
-    for event in scheduled {
-        blocks.lock().unwrap().push(event);
-    }
-    for event in blocks.into_inner().unwrap() {
+    for event in blocks.iter() {
         let ics = format!(
             "
 BEGIN:VEVENT\r
@@ -81,16 +75,7 @@ END:VEVENT\r",
             uid = event.uid,
             now = event.dtstamp.format("%Y%m%dT%H%M%SZ"),
             dtstart = event.dtstart.format("%Y%m%dT%H%M%S"),
-            duration = iso8601::Duration::YMDHMS {
-                year: 0,
-                month: 0,
-                day: 0,
-                hour: u32::from_str(&event.duration.num_hours().to_string()).unwrap_or(0),
-                minute: 0,
-                second: 0,
-                millisecond: 0,
-            }
-            .to_string(),
+            duration = ical::format_duration_ical(event.duration),
             summary = event.summary,
         )
         .to_string();
@@ -124,97 +109,142 @@ END:VEVENT\r",
 }
 
 fn schedule(tasks: Mutex<Vec<Task>>, config_data: ConfigInfo, blocks: Mutex<Vec<TimeBlock>>) {
-    let blocks_copy = {
-        let guard = blocks.lock().unwrap();
-        guard.clone()
-    };
-    print!("blocks{:?}", blocks_copy);
+    let mut block_guard = blocks.lock().unwrap();
 
-    let mut scheduled = vec![];
     let mut tasks_copy = {
-        let guard = tasks.lock().unwrap();
-        guard.clone()
+        let task_guard = tasks.lock().unwrap();
+        task_guard.clone()
     };
-    println!("TASKS COPY");
 
-    println!("tasks_copy mutex gaurd {:?}", tasks_copy);
+    block_guard.sort_by(|a, b| a.dtstart.timestamp().cmp(&b.dtstart.timestamp()));
 
-    let mut current_time = Local::now();
-    for block in &blocks_copy {
-        println!("time is {}", current_time);
-        let time_til = block.dtstart - current_time;
-        //if the time til
-        if time_til > Duration::zero() {
-            let mut i = 0;
-            for task in tasks_copy.clone() {
-                if task.estimated <= time_til {
-                    scheduled.push(TimeBlock {
-                        duration: task.estimated,
-                        dtstart: current_time,
-                        uid: task.uuid,
-                        dtstamp: Utc::now(),
-                        summary: task.description.clone(),
-                    });
-                    tasks_copy.remove(i);
-                    current_time += task.estimated;
-                }
-                i += 1;
+    let blocks_copy = block_guard.clone();
+
+    let mut time_line = Local::now();
+    let mut blocks_copy_iter = blocks_copy.iter().clone();
+    let mut not_scheduled = vec![];
+    for task in tasks_copy {
+        println!("scheduling task {}", task.description);
+        let next_task_estimated= tasks_copy.iter().next().unwrap();
+        for block in blocks_copy_iter.clone() {
+            println!("trying block {}", block.summary);
+            let mut time_til = time_line - block.dtstart;
+            let estimated_time_task = task.estimated;
+            let next_block_time=blocks_copy_iter.next().unwrap_or(a).dtstart;
+            // if there is no time til then we need to update te time_line to the end of the block
+            // and update the time_til to be the gap between the end of that block and then next
+            // one
+            if time_til > Duration::zero() {
+                //this should only run when we are actively in a block
+                //which should be only once at the beginning
+                time_line = block.dtstart + block.duration;
+                time_til = blocks_copy_iter.next().unwrap().dtstart - time_line;
             }
-        } else {
-            current_time = block.dtstart;
-            let mut i = 0;
-            for task in tasks_copy.clone() {
-                if task.estimated <= time_til {
-                    scheduled.push(TimeBlock {
-                        duration: task.estimated,
-                        dtstart: current_time,
-                        uid: task.uuid,
-                        dtstamp: Utc::now(),
-                        summary: task.description.clone(),
-                    });
-                    if tasks.lock().unwrap().len() > 1 {
-                        tasks.lock().unwrap().remove(i);
-                    }
-                    current_time += task.estimated;
-                }
-                i += 1;
+            //if the there is time to do the task lets schedule it
+            if estimated_time_task <= time_til {
+                block_guard.push(TimeBlock {
+                    duration: estimated_time_task,
+                    dtstart: time_line,
+                    uid: task.uuid.clone(),
+                    dtstamp: Utc::now(),
+                    summary: task.description.clone(),
+                });
+                time_line += estimated_time_task;
+                if 
+            }
+            //otherwise put it in the not scheduled vec
+            else {
+                not_scheduled.push(task.clone());
+                time_line += estimated_time_task;
             }
         }
     }
-    let last_block_time = {
-        let guard = blocks.lock().unwrap();
-        let last = guard
-            .last()
-            .unwrap_or(&TimeBlock {
-                dtstart: Local::now(),
-                dtstamp: Utc::now(),
-                duration: Duration::zero(),
-                summary: "".to_string(),
-                uid: Uuid::new_v4().to_string(),
-            })
-            .dtstart;
-        last + guard
-            .last()
-            .unwrap_or(&TimeBlock {
-                dtstart: Local::now(),
-                dtstamp: Utc::now(),
-                duration: Duration::zero(),
-                summary: "".to_string(),
-                uid: Uuid::new_v4().to_string(),
-            })
-            .duration
-    };
-    for task_left in tasks.lock().unwrap().iter() {
-        scheduled.push(TimeBlock {
-            duration: task_left.estimated,
-            dtstart: last_block_time,
-            uid: task_left.uuid.clone(),
+    //once we are done looping through all the tasks we are left with the scheduled and the not
+    //scheduled. From here we need to get the time of the last scheduled task or block
+    //and then we take the not scheduled tasks and schedule them all one after another in the free
+    //time
+    let last_time_scheduled = block_guard.last().unwrap().dtstart;
+    let mut time_line_after = last_time_scheduled;
+    for task in not_scheduled {
+        block_guard.push(TimeBlock {
+            duration: task.estimated,
+            dtstart: time_line_after,
+            uid: task.uuid,
             dtstamp: Utc::now(),
-            summary: task_left.description.clone(),
+            summary: task.description.clone(),
         });
+        //update time_line_after
+        time_line_after += task.estimated
     }
-    create_caldav_events(scheduled, config_data, blocks).expect("failed to create_caldav_events");
+
+    block_guard.sort_by(|a, b| a.dtstart.timestamp().cmp(&b.dtstart.timestamp()));
+    println!("{:?}", block_guard);
+    create_caldav_events(config_data, block_guard).expect("failed to create_caldav_events");
 }
+
+// for block in &blocks_copy {
+//     println!("time is {}", current_time);
+//     if j == 0 {
+//         time_til = block.dtstart - current_time;
+//     } else {
+//         time_til = blocks_copy.iter().next().unwrap().dtstart - current_time;
+//     }
+//     //if there is still time_til the next block ie we are not actively in a block
+//     //then create tasks
+//     if time_til > Duration::zero() {
+//         println!("in if case if the time_til >0{time_til}");
+//         let mut i = 0;
+//         for task in tasks_copy.clone() {
+//             //if theres time to fit the task in , then schedule it, if not then dont
+//             if task.estimated <= time_til {
+//                 scheduled.push(TimeBlock {
+//                     duration: task.estimated,
+//                     dtstart: current_time,
+//                     uid: task.uuid,
+//                     dtstamp: Utc::now(),
+//                     summary: task.description.clone(),
+//                 });
+//                 tasks.lock().unwrap().iter_mut().nth(i).unwrap().status =
+//                     "scheduled".to_string();
+//                 //update current_time
+//                 current_time += task.estimated;
+//                 println!("updated current_time {current_time}");
+//                 //update time_til
+//                 time_til -= task.estimated;
+//             }
+//             i += 1;
+//         }
+//     }
+//     //otherwise if we are in a block set the "current_time" to the end of the block
+//     else {
+//         current_time = block.dtstart + block.duration;
+//         println!(
+//             "in the else case the time should be set to the end of the block{current_time}"
+//         );
+//         println!("time til: {time_til}");
+//         let mut i = 0;
+//         for task in tasks_copy.clone() {
+//             println!("current_time in the for task block");
+//             if task.estimated <= time_til {
+//                 scheduled.push(TimeBlock {
+//                     duration: task.estimated,
+//                     dtstart: current_time,
+//                     uid: task.uuid,
+//                     dtstamp: Utc::now(),
+//                     summary: task.description.clone(),
+//                 });
+//
+//                 tasks.lock().unwrap().iter_mut().nth(i).unwrap().status =
+//                     "scheduled".to_string();
+//                 //update current_time
+//                 current_time += task.estimated;
+//                 //update time_til
+//                 time_til -= task.estimated;
+//             }
+//             i += 1;
+//         }
+//
+// remove the tasks from the global task vec
 
 fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
     // Input: "20250806T195556Z" → Output: DateTime<Utc>

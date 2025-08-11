@@ -62,6 +62,62 @@ fn convert_raw_blocks(blocks: Vec<TimeBlockRaw>) -> Vec<TimeBlock> {
     }
     serialized_blocks
 }
+pub fn format_duration_ical(duration: Duration) -> String {
+    let mut total_seconds = duration.num_seconds();
+
+    // Handle negative durations (RFC 5545 allows negative durations by prefixing with '-')
+    let negative = total_seconds < 0;
+    if negative {
+        total_seconds = -total_seconds;
+    }
+
+    let weeks = total_seconds / (7 * 24 * 3600);
+    total_seconds %= 7 * 24 * 3600;
+
+    let days = total_seconds / (24 * 3600);
+    total_seconds %= 24 * 3600;
+
+    let hours = total_seconds / 3600;
+    total_seconds %= 3600;
+
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+
+    let mut result = String::new();
+
+    if negative {
+        result.push('-');
+    }
+
+    result.push('P');
+
+    if weeks > 0 {
+        result.push_str(&format!("{}W", weeks));
+    }
+    if days > 0 {
+        result.push_str(&format!("{}D", days));
+    }
+
+    if hours > 0 || minutes > 0 || seconds > 0 {
+        result.push('T');
+        if hours > 0 {
+            result.push_str(&format!("{}H", hours));
+        }
+        if minutes > 0 {
+            result.push_str(&format!("{}M", minutes));
+        }
+        if seconds > 0 {
+            result.push_str(&format!("{}S", seconds));
+        }
+    }
+
+    // If no time or day components, zero duration is "PT0S"
+    if result == "P" || result == "-P" {
+        result = String::from("PT0S");
+    }
+
+    result
+}
 pub fn duration_to_minutes(duration: &iso8601::Duration) -> i64 {
     match duration {
         iso8601::Duration::Weeks(weeks) => *weeks as i64 * 7 * 24 * 60,
