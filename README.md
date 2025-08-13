@@ -4,6 +4,7 @@ Cronwave takes all your task, their estimated times and schedules them according
 pushes the new changes.
 ## **Feature list/Roadmap**
 - [x] sync with private caldav servers such as Radicale
+- [ ] rescheduling feature that allows you to create new events and have your tasks move around them
 - [ ] google/apple calendar support
 - [ ] ui
 - [ ] more advanced ai/monte carlo simulation scheduling algorithm
