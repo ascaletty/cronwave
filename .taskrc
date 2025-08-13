@@ -1,0 +1,52 @@
+# [Created by task 3.4.1 8/5/2025 02:21:53]
+data.location=/home/ascaletty23/.task
+news.version=3.4.1
+
+# To use the default location of the XDG directories,
+# move this configuration file from ~/.taskrc to ~/.config/task/taskrc and update location config as follows:
+
+#data.location=~/.local/share/task
+#hooks.location=~/.config/task/hooks
+
+# Color theme (uncomment one to use)
+#include light-16.theme
+#include light-256.theme
+#include bubblegum-256.theme
+#include dark-16.theme
+#include dark-256.theme
+#include dark-red-256.theme
+#include dark-green-256.theme
+#include dark-blue-256.theme
+#include dark-violets-256.theme
+#include dark-yellow-green.theme
+#include dark-gray-256.theme
+#include dark-gray-blue-256.theme
+include solarized-dark-256.theme
+#include solarized-light-256.theme
+#include no-color.theme
+
+uda.time_map.type=string
+uda.time_map.label=Time Map
+uda.time_map.default=work
+uda.estimated.type=duration
+uda.estimated.label=Estimated Time
+uda.completion_date.type=date
+uda.completion_date.label=Expected Completion Date
+uda.scheduling.type=string
+uda.scheduling.label=Scheduling
+uda.min_block.type=numeric
+uda.min_block.label=Minimum Time Block
+uda.min_block.default=2
+recurrence.confirmation=no
+report.ready.columns=id,start.age,entry.age,depends.indicator,priority,project,tags,recur.indicator,scheduled.relative,due.relative,until.remaining,description,urgency
+journal.info=0
+urgency.inherit=1
+urgency.blocked.coefficient=0
+urgency.blocking.coefficient=0
+urgency.waiting.coefficient=0
+urgency.scheduled.coefficient=0
+uda.scheduled_status.type=string
+uda.scheduled_status.label=Scheduled Status
+uda.scheduled_status.values=unscheduled,scheduled
+default.scheduled_status= unscheduled
+
