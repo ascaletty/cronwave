@@ -1,17 +1,79 @@
-use crate::ConfigInfo;
-use crate::{TimeBlock, TimeBlockRaw};
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
+use cronwave_lib::ical::duration_to_minutes;
+use cronwave_lib::structs::*;
 use ical::property::Property;
 use icalendar::{Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime};
 use std::fs::read_to_string;
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::Write;
+use std::iter;
 use std::os::linux::net::SocketAddrExt;
+use std::process::Command;
+use std::str::FromStr;
 use std::sync::Mutex;
 
-pub fn fetch_ical_text(config_data: ConfigInfo) {
+pub fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
+    // Input: "20250806T195556Z" → Output: DateTime<Utc>
+    NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%SZ")
+        .ok()
+        .map(|ndt| DateTime::from_naive_utc_and_offset(ndt, Utc))
+}
+pub fn fetch_tasks() -> Vec<Task> {
+    let task_command = Command::new("task")
+        .args(["status:pending", "export"])
+        .output()
+        .expect("failed to run task export");
+
+    let output_raw: Vec<RawTask> =
+        serde_json::from_slice(&task_command.stdout).expect("invalid taskwarrior output");
+    let mut output = vec![];
+    for task in output_raw {
+        let task_item = Task {
+            uuid: task.uuid,
+            description: task.description,
+            due: parse_timestamp(task.due.expect("failed to get scheduled time").as_str())
+                .expect("failed timestamp parse"),
+            estimated: Duration::minutes(duration_to_minutes(
+                &iso8601::duration(&task.estimated.unwrap())
+                    .expect("failed to parse iso8601 from str"),
+            )),
+            status: task.status,
+            urgency: task.urgency,
+        };
+        output.push(task_item);
+    }
+
+    output.sort_by(|a, b| a.urgency.partial_cmp(&b.urgency).unwrap());
+    // println!("TASKS OUTPUT");
+    // println!("output of fetch tasks{:?}", output);
+
+    output
+}
+fn convert_rrule(rrule: String) -> Rrule {
+    let mut freq = String::new();
+    let mut until_ts: i64 = 0;
+
+    for part in rrule.split(';') {
+        if part.starts_with("FREQ=") {
+            freq = part["FREQ=".len()..].to_string();
+        } else if part.starts_with("UNTIL=") {
+            let date_str = &part["UNTIL=".len()..];
+            // Parse into NaiveDateTime (no timezone yet)
+            let naive_dt = NaiveDateTime::parse_from_str(date_str, "%Y%m%dT%H%M%S")
+                .expect("Invalid datetime format");
+            // Assume UTC and convert to Unix timestamp
+            until_ts = Utc.from_utc_datetime(&naive_dt).timestamp();
+        }
+    }
+    Rrule {
+        freq,
+        until: until_ts,
+    }
+}
+
+pub fn fetch_ical_text(config_data: auth) {
     let client = reqwest::blocking::Client::new();
     let response = client
         .get(config_data.cal_url)
@@ -57,87 +119,11 @@ fn convert_raw_blocks(blocks: Vec<TimeBlockRaw>) -> Vec<TimeBlock> {
             uid: block.uid,
             summary: block.summary,
             dtstamp: block.dtstamp,
+            rrule: convert_rrule(block.rrule),
         };
         serialized_blocks.push(data);
     }
     serialized_blocks
-}
-pub fn format_duration_ical(duration: Duration) -> String {
-    let mut total_seconds = duration.num_seconds();
-
-    // Handle negative durations (RFC 5545 allows negative durations by prefixing with '-')
-    let negative = total_seconds < 0;
-    if negative {
-        total_seconds = -total_seconds;
-    }
-
-    let weeks = total_seconds / (7 * 24 * 3600);
-    total_seconds %= 7 * 24 * 3600;
-
-    let days = total_seconds / (24 * 3600);
-    total_seconds %= 24 * 3600;
-
-    let hours = total_seconds / 3600;
-    total_seconds %= 3600;
-
-    let minutes = total_seconds / 60;
-    let seconds = total_seconds % 60;
-
-    let mut result = String::new();
-
-    if negative {
-        result.push('-');
-    }
-
-    result.push('P');
-
-    if weeks > 0 {
-        result.push_str(&format!("{}W", weeks));
-    }
-    if days > 0 {
-        result.push_str(&format!("{}D", days));
-    }
-
-    if hours > 0 || minutes > 0 || seconds > 0 {
-        result.push('T');
-        if hours > 0 {
-            result.push_str(&format!("{}H", hours));
-        }
-        if minutes > 0 {
-            result.push_str(&format!("{}M", minutes));
-        }
-        if seconds > 0 {
-            result.push_str(&format!("{}S", seconds));
-        }
-    }
-
-    // If no time or day components, zero duration is "PT0S"
-    if result == "P" || result == "-P" {
-        result = String::from("PT0S");
-    }
-
-    result
-}
-pub fn duration_to_minutes(duration: &iso8601::Duration) -> i64 {
-    match duration {
-        iso8601::Duration::Weeks(weeks) => *weeks as i64 * 7 * 24 * 60,
-        iso8601::Duration::YMDHMS {
-            year,
-            month,
-            day,
-            hour,
-            minute,
-            second,
-            millisecond: _,
-        } => {
-            (*year as i64 * 365 * 24 * 60) +     // assume 365 days/year
-                (*month as i64 * 30 * 24 * 60) +     // assume 30 days/month
-                (*day as i64 * 24 * 60) +
-                (*hour as i64 * 60) +
-                (*minute as i64) +
-                (*second as i64 / 60)
-        }
-    }
 }
 pub fn parse_ical_blocks() -> Mutex<Vec<TimeBlock>> {
     let contents = read_to_string("school.ics").expect("couldnt read school.ics");
@@ -161,6 +147,17 @@ pub fn parse_ical_blocks() -> Mutex<Vec<TimeBlock>> {
                 dtstamp: event.get_timestamp().unwrap(),
                 summary: event.get_summary().unwrap().to_string(),
                 uid: event.get_uid().unwrap().to_string(),
+                rrule: event
+                    .properties()
+                    .iter()
+                    .find(|x| x.0 == "RRULE")
+                    .unwrap_or((
+                        &"RRULE".to_string(),
+                        &icalendar::Property::new("RRULE".to_string(), ""),
+                    ))
+                    .1
+                    .value()
+                    .to_string(),
             };
             timebloc_vec.push(new_block);
         }
