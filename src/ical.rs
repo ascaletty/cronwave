@@ -1,5 +1,5 @@
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
-use cronwave_lib::structs::*;
+use cronwave::structs::*;
 use icalendar::{Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime};
 use iso8601_duration::Duration;
 use std::fs::read_to_string;

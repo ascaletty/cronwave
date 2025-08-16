@@ -2,7 +2,7 @@ use chrono::DateTime;
 use chrono::Local;
 use chrono::TimeZone;
 use chrono::Utc;
-use cronwave_lib::structs::{auth, ConfigInfo, Gap, Task, TimeBlock, TimeBlockRaw};
+use cronwave::structs::*;
 use iso8601::duration;
 use reqwest::blocking::Client;
 use reqwest::header::*;
