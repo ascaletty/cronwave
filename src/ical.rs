@@ -8,6 +8,60 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::process::Command;
 use std::str::FromStr;
+fn week_and_day(week: u32, day: u32, year: i32) -> i64 {
+    let start = Local::with_ymd_and_hms(&Local, year, 0, 0, 0, 0, 0)
+        .unwrap()
+        .timestamp();
+    let num_days = week * 7 + day;
+    let num_day_i = num_days as i64;
+    num_day_i * 864000 + start
+}
+fn ordinal(year: i32, ddd: u32) -> i64 {
+    let start = Local::with_ymd_and_hms(&Local, year, 0, 0, 0, 0, 0)
+        .unwrap()
+        .timestamp();
+    let num_days = ddd as i64;
+    num_days * 864000 + start
+}
+fn convert_iso8601_to_timestamp(dur: iso8601::DateTime) -> i64 {
+    match dur.date {
+        iso8601::Date::YMD { year, month, day } => Local::with_ymd_and_hms(
+            &Local,
+            year,
+            month,
+            day,
+            dur.time.hour,
+            dur.time.minute,
+            dur.time.second,
+        )
+        .unwrap()
+        .timestamp(),
+        iso8601::Date::Week {
+            year: year,
+            ww: ww,
+            d: d,
+        } => week_and_day(ww, d, year),
+        iso8601::Date::Ordinal { year: y, ddd: ddd } => ordinal(y, ddd),
+    }
+}
+fn iso8601_dur_to_timestamp(dur: iso8601::Duration) -> i64 {
+    match dur {
+        iso8601::Duration::YMDHMS {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+        } => {
+            (year * 31536000 + month * 2629746 + day * 86400 + hour * 3600 + minute * 60 + second)
+                as i64
+        }
+
+        iso8601::Duration::Weeks(week) => week_and_day(week, 0, 0),
+    }
+}
 
 pub fn fetch_tasks() -> Vec<Task> {
     let task_command = Command::new("task")
@@ -22,8 +76,10 @@ pub fn fetch_tasks() -> Vec<Task> {
         let task_item = Task {
             uuid: task.uuid,
             description: task.description,
-            due: DateTime::from_str(&task.due).unwrap().timestamp(),
-            estimated: DateTime::from_str(&task.estimated).unwrap().timestamp(),
+            due: convert_iso8601_to_timestamp(iso8601::DateTime::from_str(&task.due).unwrap()),
+            estimated: iso8601_dur_to_timestamp(
+                iso8601::Duration::from_str(&task.estimated).unwrap(),
+            ),
             status: task.status,
             urgency: task.urgency,
         };
@@ -36,11 +92,14 @@ pub fn fetch_tasks() -> Vec<Task> {
 
     output
 }
-pub fn fetch_ical_text(config_data: auth) {
+pub fn fetch_ical_text(config_data: ConfigInfo) {
     let client = reqwest::blocking::Client::new();
     let response = client
-        .get(config_data.cal_url)
-        .basic_auth(config_data.cal_username, Some(config_data.cal_pass))
+        .get(config_data.auth.cal_url)
+        .basic_auth(
+            config_data.auth.cal_username,
+            Some(config_data.auth.cal_pass),
+        )
         .send()
         .expect("failed to fetch ical");
     let school = File::create("school.ics").unwrap();
@@ -83,7 +142,15 @@ pub fn parse_ical_blocks() -> Vec<TimeBlock> {
                 None => panic!("no event start"),
             };
             let duration = match event.properties().get("DURATION") {
-                Some(dur) => Some(dur.value().parse::<Duration>().unwrap().num_seconds()),
+                Some(dur) => {
+                    let float = dur
+                        .value()
+                        .parse::<Duration>()
+                        .unwrap()
+                        .num_seconds()
+                        .unwrap();
+                    Some(float as i64)
+                }
                 None => None,
             };
             let uid = event.get_uid().expect("no uuid");
