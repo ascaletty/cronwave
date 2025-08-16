@@ -2,74 +2,54 @@ use chrono::DateTime;
 use chrono::Local;
 use chrono::TimeZone;
 use chrono::Utc;
-use cronwave_lib::structs::Rrule;
 use cronwave_lib::structs::{auth, ConfigInfo, Gap, Task, TimeBlock, TimeBlockRaw};
 use reqwest::blocking::Client;
 use reqwest::header::*;
+use rrule::RRuleSet;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use std::str::FromStr;
-use std::sync::{Mutex, MutexGuard};
 fn create_virtual_events(blocks: Vec<TimeBlock>) -> Vec<TimeBlock> {
     let current_time = Local::now().timestamp();
     let mut with_virtual = vec![];
     for block in blocks {
-        let mut time_remaining = block.rrule.until - current_time;
-        let mut i = 1;
-        while time_remaining > 0 {
-            let freq = match block.clone().rrule.freq.as_str() {
-                "WEEKLY" => 604800,
-                "DAILY" => 86400,
-                "MONTHLY" => 2628002,
-                "YEARLY" => 31536000,
-                _ => panic!("unrecognized rrule type"),
-            };
+        let rruleset = RRuleSet::new(DateTime::from_timestamp(block.dtstart, 0).unwrap())
+            .rrule(block.rrule.unwrap());
+        let result = rruleset.all_unchecked();
+        for time in result {
             let new_block = TimeBlock {
-                rrule: Rrule {
-                    freq: "NONE".to_string(),
-                    until: 0,
-                },
-                dtstart: chrono::DateTime::from_timestamp(block.dtstart.timestamp() + i * freq, 0)
-                    .unwrap()
-                    .into(),
+                dtstart: time.timestamp(),
                 duration: block.duration,
-                summary: block.summary.clone(),
                 dtstamp: block.dtstamp,
-                uid: block.uid.clone(),
+                dtend: None,
+                summary: block.summary,
+                uid: block.uid,
+                rrule: None,
             };
-            i += 1;
-            time_remaining -= freq;
             with_virtual.push(new_block);
         }
     }
     with_virtual
 }
-pub fn schedule(tasks: Mutex<Vec<Task>>, config_data: auth, blocks: Mutex<Vec<TimeBlock>>) {
-    let mut block_guard = blocks.lock().unwrap();
-
-    let mut tasks_copy = {
-        let task_guard = tasks.lock().unwrap();
-        task_guard.clone()
-    };
-    let greatest_dur = tasks_copy.last().unwrap().estimated.num_seconds();
-    let mut repeating_clone = block_guard.clone();
-    repeating_clone.retain(|x| x.rrule.freq != "NONE");
+pub fn schedule(tasks: Vec<Task>, config_data: auth, mut blocks: Vec<TimeBlock>) {
+    let mut tasks_copy = tasks.clone();
+    let greatest_dur = tasks_copy.last().unwrap().estimated;
+    let mut repeating_clone = blocks.clone();
+    repeating_clone.retain(|x| x.rrule != None);
     let mut with_virtual = create_virtual_events(repeating_clone);
 
-    with_virtual.sort_by(|a, b| a.dtstart.timestamp().cmp(&b.dtstart.timestamp()));
+    with_virtual.sort_by(|a, b| a.dtstart.cmp(&b.dtstart));
     // println!("block gaurs \n \n \n {:?}", block_guard);
 
     let time_line = Local::now().timestamp();
 
     let mut blocks_copy = with_virtual.clone();
 
-    blocks_copy.retain(|x| x.dtstart.timestamp() + x.duration.num_seconds() > time_line);
+    blocks_copy.retain(|x| x.dtstart + x.duration > time_line);
     let mut gaps = find_the_gaps(blocks_copy, greatest_dur);
-    let num_of_tasks = tasks_copy.len();
 
     let mut scheduled = vec![];
     gaps.retain(|x| x.end > time_line);
-    tasks_copy.sort_by_key(|x| x.due.timestamp());
+    tasks_copy.sort_by_key(|x| x.due);
     // println!("tasks copy \n {:?} \n", tasks_copy);
     for gap in gaps {
         let mut time_til = gap.end - gap.start;
@@ -79,52 +59,48 @@ pub fn schedule(tasks: Mutex<Vec<Task>>, config_data: auth, blocks: Mutex<Vec<Ti
         while let Some((idx, _)) = tasks_copy
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.status != "scheduled" && t.estimated.num_seconds() <= time_til)
-            .max_by_key(|(_t, t)| t.estimated.num_seconds())
+            .filter(|(_, t)| t.status != "scheduled" && t.estimated <= time_til)
+            .max_by_key(|(_t, t)| t.estimated)
         {
             let task = tasks_copy[idx].clone();
-            if block_start + task.estimated.num_seconds() > task.due.timestamp() {
+            if block_start + task.estimated > task.due {
                 println!("Task will not be completed in time");
             }
             scheduled.push(TimeBlock {
                 duration: task.estimated,
-                dtstart: Local.timestamp_opt(block_start, 0).unwrap(),
+                dtstart: block_start,
+                dtend: None,
                 uid: task.uuid.clone(),
                 dtstamp: Utc::now(),
                 summary: task.description.clone(),
-                rrule: Rrule {
-                    freq: "NONE".to_string(),
-                    until: 0,
-                },
+                rrule: None,
             });
             tasks_copy[idx].status = "scheduled".to_string();
 
             // Advance inside the block
-            block_start += task.estimated.num_seconds();
-            time_til -= task.estimated.num_seconds();
+            block_start += task.estimated;
+            time_til -= task.estimated;
         }
     }
 
     tasks_copy.retain(|x| x.status == "pending".to_string());
     for block in scheduled {
-        block_guard.push(block);
+        blocks.push(block);
     }
-    let last_time_scheduled = block_guard.last().unwrap().dtstart;
+    let last_time_scheduled = blocks.last().unwrap().dtstart;
     let mut time_line_after = last_time_scheduled;
     for task in tasks_copy {
-        if time_line_after.timestamp() > task.due.timestamp() {
+        if time_line_after > task.due {
             println!("task will not be completed in time");
         }
-        block_guard.push(TimeBlock {
+        blocks.push(TimeBlock {
             duration: task.estimated,
             dtstart: time_line_after,
+            dtend: None,
             uid: task.uuid,
             dtstamp: Utc::now(),
             summary: task.description.clone(),
-            rrule: Rrule {
-                freq: "NONE".to_string(),
-                until: 0,
-            },
+            rrule: None,
         });
         //update time_line_after
         time_line_after += task.estimated
@@ -132,7 +108,7 @@ pub fn schedule(tasks: Mutex<Vec<Task>>, config_data: auth, blocks: Mutex<Vec<Ti
 
     // block_guard.sort_by(|a, b| a.dtstart.timestamp().cmp(&b.dtstart.timestamp()));
     // println!("{:?}", block_guard);
-    match create_caldav_events(config_data, block_guard) {
+    match create_caldav_events(config_data, blocks) {
         Ok(_) => {
             println!("Events created!");
             Command::new("task delete all").exec();
@@ -144,7 +120,6 @@ pub fn schedule(tasks: Mutex<Vec<Task>>, config_data: auth, blocks: Mutex<Vec<Ti
         }
     }
 }
-
 fn find_the_gaps(blocks: Vec<TimeBlock>, greatest_dur_task: i64) -> Vec<Gap> {
     let last_block = blocks
         .last()
@@ -152,19 +127,17 @@ fn find_the_gaps(blocks: Vec<TimeBlock>, greatest_dur_task: i64) -> Vec<Gap> {
             Local::now().timestamp(),
             greatest_dur_task,
         ))
-        .dtstart
-        .timestamp();
+        .dtstart;
     let mut gap_vec = vec![];
     let mut i = 0;
     for block in blocks.clone() {
         i += 1;
         let gap = Gap {
-            start: block.dtstart.timestamp() + block.duration.num_seconds(),
+            start: block.dtstart + block.duration,
             end: blocks
                 .get(i)
                 .unwrap_or(&TimeBlock::last(last_block, greatest_dur_task))
-                .dtstart
-                .timestamp(),
+                .dtstart,
         };
         print!(
             "new gap at {} to {}",
@@ -177,33 +150,34 @@ fn find_the_gaps(blocks: Vec<TimeBlock>, greatest_dur_task: i64) -> Vec<Gap> {
 }
 fn create_caldav_events(
     config_data: auth,
-    blocks: MutexGuard<'_, Vec<TimeBlock>>,
+    blocks: Vec<TimeBlock>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut string_vec = vec!["BEGIN:VCALENDAR".to_string()];
 
-    for event in blocks.iter() {
-        let ics = format!(
-            "
-BEGIN:VEVENT\r
-UID:{uid}\r
-DTSTAMP:{now}\r
-DTSTART:{dtstart}\r
-DURATION:{duration}\r
-SUMMARY:{summary}\r
-RRULE:FREQ={rrule_freq};UNTIL={rrule_until}\r
-END:VEVENT\r",
-            rrule_freq = event.rrule.freq,
-            rrule_until = DateTime::from_timestamp(event.rrule.until, 0)
-                .unwrap()
-                .format("%Y%m%dT%H%M%S"),
-            uid = event.uid,
-            now = event.dtstamp.format("%Y%m%dT%H%M%SZ"),
-            dtstart = event.dtstart.format("%Y%m%dT%H%M%S"),
-            duration = cronwave_lib::ical::format_duration_ical(event.duration),
-            summary = event.summary,
-        )
-        .to_string();
-        string_vec.push(ics);
+    for event in blocks {
+        string_vec.push("BEGIN:VEVENT".to_string());
+        string_vec.push(format!("UID:{}", event.uid));
+        string_vec.push(format!("DTSTAMP:{}", event.dtstamp));
+        match event.duration {
+            Some(dur) => string_vec.push(format!(
+                "DURATION:{}",
+                DateTime::from_timestamp(dur, 0)
+                    .unwrap()
+                    .format("%Y%m%dt%H%M%S")
+            )),
+            None => (),
+        };
+        match event.dtend {
+            Some(dtend) => string_vec.push(format!("DTEND:{}", DateTime::from_timestamp(dtend, 0))),
+            None => (),
+        };
+
+        string_vec.push(format!("SUMMARY:{}", event.summary));
+        match event.rrule {
+            Some(rrule) => string_vec.push(format!("RRULE:{}", rrule.to_string())),
+            None => (),
+        }
+        string_vec.push("END:VEVENT");
     }
     string_vec.push("END:VCALENDAR\r".to_string());
     let combined = string_vec.join("\n");
