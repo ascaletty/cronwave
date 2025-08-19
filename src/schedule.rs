@@ -7,36 +7,46 @@ use iso8601::duration;
 use reqwest::blocking::Client;
 use reqwest::header::*;
 use rrule::RRuleSet;
+use std::fmt::format;
+use std::fs::File;
+use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 use std::io::Write;
 use std::process::Stdio;
+use std::task;
 
-fn delete_all_tasks() {
-    let mut child = Command::new("task")
-        .arg("rc.confirmation=no")
-        .arg("delete")
-        .arg("all")
-        .stdin(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn task delete all");
-
-    if let Some(stdin) = child.stdin.as_mut() {
-        // Send "yes" confirmation
-        stdin.write_all(b"yes\n").expect("failed to write to stdin");
-    }
-
-    let status = child.wait().expect("failed to wait on child");
-    if status.success() {
-        println!("All tasks deleted");
-    } else {
-        eprintln!("Failed to delete tasks, status: {:?}", status);
+fn mark_all_tasks_scheduled() {
+    let count = Command::new("task")
+        .arg("+unscheduled")
+        .arg("status:pending")
+        .arg("count")
+        .output()
+        .expect("failed to count tasks");
+    let number: i32 = std::str::from_utf8(&count.stdout)
+        .expect("invalid UTF-8")
+        .trim()
+        .parse()
+        .expect("not a valid integer");
+    for i in 1..number + 1 {
+        print!("i:{}", i);
+        let string = format!("task modify {} +scheduled -unscheduled", i);
+        println!("{string}");
+        let result = Command::new("task")
+            .arg("modify")
+            .arg(i.to_string())
+            .arg("+scheduled")
+            .arg("-unscheduled")
+            .status()
+            .expect("failed to run command");
     }
 }
+
 pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeBlock>) {
     let mut tasks_copy = tasks.clone();
-    let greatest_dur = tasks_copy.last().unwrap().estimated;
+
+    let task_count = tasks_copy.clone().iter().count();
 
     // with_virtual.sort_by(|a, b| a.dtstart.cmp(&b.dtstart));
     let time_line = Local::now().timestamp();
@@ -44,7 +54,7 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
     blocks.retain(|x| {
         x.dtstart + x.duration.unwrap_or(0) > time_line || x.dtend.unwrap_or(0) > time_line
     });
-    let mut gaps = find_the_gaps(blocks.clone(), greatest_dur);
+    let mut gaps = find_the_gaps(blocks.clone());
 
     gaps.retain(|x| x.end > time_line);
     tasks_copy.sort_by_key(|x| x.due);
@@ -52,6 +62,7 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
     for gap in gaps {
         let mut time_til = gap.end - gap.start;
         let mut block_start = gap.start;
+
         // println!("time til= {}", time_til / 60);
 
         while let Some((idx, _)) = tasks_copy
@@ -81,17 +92,38 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
         }
     }
 
+    tasks_copy.retain(|x| x.status == "pending".to_string());
+    let last_time_scheduled =
+        blocks.last().unwrap().dtstart + blocks.last().unwrap().duration.unwrap();
+    let mut time_line_after = last_time_scheduled;
+    for task in tasks_copy {
+        if time_line_after > task.due {
+            println!("task will not be completed in time");
+        }
+        blocks.push(TimeBlock {
+            duration: Some(task.estimated),
+            dtstart: time_line_after,
+            dtend: None,
+            rrule: None,
+            uid: task.uuid,
+            dtstamp: Utc::now(),
+            summary: task.description.clone(),
+        });
+        //update time_line_after
+        time_line_after += task.estimated
+    }
+
     match create_caldav_events(config_data, blocks) {
         Ok(_) => {
             println!("Events created!");
-            delete_all_tasks();
+            mark_all_tasks_scheduled();
         }
         Err(_) => {
             println!("events not created")
         }
     }
 }
-fn find_the_gaps(blocks: Vec<TimeBlock>, greatest_dur_task: i64) -> Vec<Gap> {
+fn find_the_gaps(blocks: Vec<TimeBlock>) -> Vec<Gap> {
     let mut gap_vec = vec![];
 
     // Expand recurrences into actual blocks first
@@ -148,18 +180,6 @@ fn find_the_gaps(blocks: Vec<TimeBlock>, greatest_dur_task: i64) -> Vec<Gap> {
             });
         }
     }
-
-    if let Some(last) = expanded_blocks.last() {
-        let horizon = last.dtstart + greatest_dur_task;
-        let last_end = last.dtend.unwrap_or(last.dtstart);
-        if last_end < horizon {
-            gap_vec.push(Gap {
-                start: last_end,
-                end: horizon,
-            });
-        }
-    }
-
     gap_vec
 }
 
@@ -177,6 +197,7 @@ fn create_caldav_events(
                 .unwrap()
                 .format("%Y%m%dT%H%M%S")
         ));
+
         string_vec.push(format!("UID:{}", event.uid));
         string_vec.push(format!(
             "DTSTAMP:{}",
@@ -255,4 +276,34 @@ fn create_caldav_events(
     } else {
         Err(format!("❌ Failed to create event: {}", response.status()).into())
     }
+}
+
+pub fn reschedule(blocks: Vec<TimeBlock>, task_vec: Vec<Task>, config_data: ConfigInfo) {
+    let mut tasks_block = vec![];
+    let mut events = vec![];
+    let mut tasks = vec![];
+    for block in blocks.clone() {
+        if let Some(uuid_match) = task_vec.iter().find(|x| x.uuid == block.uid) {
+            tasks_block.push(block.clone());
+        } else {
+            events.push(block);
+        }
+    }
+
+    for task in tasks_block {
+        let matchingtask = task_vec
+            .iter()
+            .find(|x| x.uuid == task.uid)
+            .expect("couldnt find matching task");
+        let task_from_block = Task {
+            estimated: task.duration.unwrap(),
+            uuid: task.uid,
+            description: task.summary,
+            status: "pending".to_string(),
+            urgency: matchingtask.urgency,
+            due: matchingtask.due,
+        };
+        tasks.push(task_from_block);
+    }
+    schedule(tasks.clone(), config_data, events);
 }

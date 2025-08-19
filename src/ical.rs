@@ -1,5 +1,6 @@
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use cronwave::structs::*;
+use ical::property::Property;
 use icalendar::{Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime};
 use iso8601_duration::Duration;
 use std::fs::read_to_string;
@@ -65,9 +66,13 @@ fn iso8601_dur_to_timestamp(dur: iso8601::Duration) -> i64 {
 
 pub fn fetch_tasks() -> Vec<Task> {
     let task_command = Command::new("task")
-        .args(["status:pending", "export"])
+        .args(["status:pending", "+unscheduled", "export"])
         .output()
         .expect("failed to run task export");
+    let mut task_uuid_vec = vec![];
+
+    let uuids = File::create("uuids.txt").unwrap();
+    let mut writer = BufWriter::new(uuids);
 
     let output_raw: Vec<RawTask> =
         serde_json::from_slice(&task_command.stdout).expect("invalid taskwarrior output");
@@ -83,10 +88,54 @@ pub fn fetch_tasks() -> Vec<Task> {
             status: task.status,
             urgency: task.urgency,
         };
+
+        task_uuid_vec.push(task_item.clone().uuid);
         output.push(task_item);
     }
+    writer
+        .write_all(task_uuid_vec.join(";").as_bytes())
+        .expect("failed to write ics");
 
-    output.sort_by(|a, b| a.urgency.partial_cmp(&b.urgency).unwrap());
+    output.sort_by(|a, b| a.due.cmp(&b.due));
+    // println!("TASKS OUTPUT");
+    // println!("output of fetch tasks{:?}", output);
+
+    output
+}
+
+pub fn fetch_tasks_scheduled() -> Vec<Task> {
+    let task_command = Command::new("task")
+        .args(["status:pending", "+scheduled", "export"])
+        .output()
+        .expect("failed to run task export");
+    let mut task_uuid_vec = vec![];
+
+    let uuids = File::create("uuids.txt").unwrap();
+    let mut writer = BufWriter::new(uuids);
+
+    let output_raw: Vec<RawTask> =
+        serde_json::from_slice(&task_command.stdout).expect("invalid taskwarrior output");
+    let mut output = vec![];
+    for task in output_raw {
+        let task_item = Task {
+            uuid: task.uuid,
+            description: task.description,
+            due: convert_iso8601_to_timestamp(iso8601::DateTime::from_str(&task.due).unwrap()),
+            estimated: iso8601_dur_to_timestamp(
+                iso8601::Duration::from_str(&task.estimated).unwrap(),
+            ),
+            status: task.status,
+            urgency: task.urgency,
+        };
+
+        task_uuid_vec.push(task_item.clone().uuid);
+        output.push(task_item);
+    }
+    writer
+        .write_all(task_uuid_vec.join(";").as_bytes())
+        .expect("failed to write ics");
+
+    output.sort_by(|a, b| a.due.cmp(&b.due));
     // println!("TASKS OUTPUT");
     // println!("output of fetch tasks{:?}", output);
 
@@ -109,7 +158,7 @@ pub fn fetch_ical_text(config_data: ConfigInfo) {
         .write_all(response.text().unwrap().as_bytes())
         .expect("failed to write ics");
 }
-pub fn parse_ical_blocks() -> Vec<TimeBlock> {
+pub fn parse_ical_blocks<'b>() -> Vec<TimeBlock> {
     let contents = read_to_string("school.ics").expect("couldnt read school.ics");
     let parsed_calendar: Calendar = contents.parse().unwrap();
     let mut timebloc_vec = vec![];
@@ -210,6 +259,6 @@ pub fn parse_ical_blocks() -> Vec<TimeBlock> {
             });
         }
     }
-
+    println!("print blocks{:?}", timebloc_vec);
     timebloc_vec
 }

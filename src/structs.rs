@@ -1,4 +1,5 @@
 use chrono::TimeZone;
+
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
 use icalendar::DatePerhapsTime;
 use rrule::{RRule, Unvalidated, Validated};
@@ -59,19 +60,20 @@ impl Gap {
         }
     }
 }
-impl TimeBlock {
-    pub fn last(last_block: i64, greatest_duration: i64) -> Self {
-        Self {
-            duration: Some(greatest_duration),
-            dtstart: last_block,
-            summary: "last".to_string(),
-            uid: "615d0917-2955-4f3e-ae21-ca0f72bdc48a".to_string(),
-            dtstamp: Utc::now(),
-            dtend: None,
-            rrule: None,
-        }
-    }
-}
+// impl TimeBlock {
+//     pub fn last(last_block: i64, greatest_duration: i64) -> Self {
+//         Self {
+//             duration: Some(greatest_duration),
+//             dtstart: last_block,
+//             summary: "last".to_string(),
+//             uid: "615d0917-2955-4f3e-ae21-ca0f72bdc48a".to_string(),
+//             dtstamp: Utc::now(),
+//             dtend: None,
+//             rrule: None,
+//             class: None,
+//         }
+//     }
+// }
 
 #[derive(Deserialize, Clone, Serialize, Debug)]
 pub struct auth {
