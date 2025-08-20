@@ -47,8 +47,6 @@ fn mark_all_tasks_scheduled() {
 pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeBlock>) {
     let mut tasks_copy = tasks.clone();
 
-    let task_count = tasks_copy.clone().iter().count();
-
     // with_virtual.sort_by(|a, b| a.dtstart.cmp(&b.dtstart));
     let time_line = Local::now().timestamp();
 

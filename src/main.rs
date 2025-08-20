@@ -1,13 +1,11 @@
 mod config;
 mod ical;
 mod schedule;
-use std::{fs::File, task};
 
-use clap::{Command, Parser};
+use clap::Parser;
 use clap_derive::Parser as Parser_derive;
 use cronwave::structs::{ConfigInfo, Task, TimeBlock};
 
-use std::os::unix::process::CommandExt;
 #[derive(Parser_derive, Debug)]
 struct Args {
     argument: String,
@@ -28,7 +26,7 @@ fn main() {
     match args.argument.as_str() {
         "schedule" => schedule::schedule(tasks, config_data, timeblock),
         "reschedule" => schedule::reschedule(timeblock, tasks_scheduled, config_data),
-        "delete" => delete(
+        "done" => delete(
             config_data,
             tasks_scheduled,
             args.second_arg.expect("expected task id to delete"),
@@ -37,13 +35,24 @@ fn main() {
         _ => (),
     }
 }
-fn delete(config_data: ConfigInfo, mut tasks: Vec<Task>, num: usize, blocks: Vec<TimeBlock>) {
+fn delete(config_data: ConfigInfo, mut tasks: Vec<Task>, num: usize, mut blocks: Vec<TimeBlock>) {
+    let task = tasks
+        .iter()
+        .find(|x| x.id == num)
+        .expect("did not find the id number requested to delete");
     let number = tasks
         .iter()
         .position(|x| x.id == num)
-        .expect("did not find the number task requested");
+        .expect("could not find id number requested to delete");
+    let uuid = task.clone().uuid;
+    let blocks_num = blocks
+        .iter()
+        .position(|x| x.uid == uuid.clone())
+        .expect("did not find the uuid in the calendar to delete");
+    blocks.remove(blocks_num);
+
     let result = std::process::Command::new("task")
-        .arg("delete")
+        .arg("done")
         .arg(num.to_string())
         .output()
         .unwrap();
