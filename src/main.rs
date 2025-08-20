@@ -40,17 +40,24 @@ fn delete(config_data: ConfigInfo, mut tasks: Vec<Task>, num: usize, mut blocks:
         .iter()
         .find(|x| x.id == num)
         .expect("did not find the id number requested to delete");
+    let name = task.clone().description;
+    let uuid_vec: Vec<TimeBlock> = blocks
+        .clone()
+        .into_iter()
+        .filter(|x| x.summary == name)
+        .collect();
     let number = tasks
         .iter()
         .position(|x| x.id == num)
         .expect("could not find id number requested to delete");
-    let uuid = task.clone().uuid;
-    let blocks_num = blocks
-        .iter()
-        .position(|x| x.uid == uuid.clone())
-        .expect("did not find the uuid in the calendar to delete");
-    blocks.remove(blocks_num);
 
+    for uid in uuid_vec {
+        let blocks_num = blocks
+            .iter()
+            .position(|x| x.uid == uid.uid)
+            .expect("did not find the uuid in the calendar to delete");
+        blocks.remove(blocks_num);
+    }
     let result = std::process::Command::new("task")
         .arg("done")
         .arg(num.to_string())

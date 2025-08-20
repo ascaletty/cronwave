@@ -58,41 +58,61 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
     let mut gaps = find_the_gaps(blocks.clone());
 
     gaps.retain(|x| x.end > time_line);
-    tasks_copy.sort_by_key(|x| x.due);
+    let mut uuid_vec: Vec<(String, usize)> = vec![];
     // println!("tasks copy \n {:?} \n", tasks_copy);
     for gap in gaps {
-        let mut time_til = gap.end - gap.start;
-        let mut block_start = gap.start;
+        let mut start = gap.start;
+        let mut time_til = gap.end - start;
 
-        // println!("time til= {}", time_til / 60);
-
-        while let Some((idx, _)) = tasks_copy
+        tasks_copy.sort_by_key(|x| x.due);
+        while let Some((idx, mut task)) = tasks_copy
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.status != "scheduled" && t.estimated <= time_til)
-            .max_by_key(|(_t, t)| t.estimated)
+            .filter(|(_, t)| t.status != "scheduled".to_string())
+            .min_by_key(|(_, t)| t.due)
         {
-            let task = tasks_copy[idx].clone();
-            if block_start + task.estimated > task.due {
-                println!("Task will not be completed in time");
+            if time_til == 0 {
+                break;
             }
-            blocks.push(TimeBlock {
-                duration: Some(task.estimated),
-                dtstart: block_start,
-                dtend: None,
-                uid: task.uuid.clone(),
-                dtstamp: Utc::now(),
-                summary: task.description.clone(),
-                rrule: None,
-            });
-            tasks_copy[idx].status = "scheduled".to_string();
-
-            // Advance inside the block
-            block_start += task.estimated;
-            time_til -= task.estimated;
+            if task.estimated > time_til {
+                blocks.push(TimeBlock {
+                    duration: Some(time_til),
+                    dtstart: start,
+                    dtend: None,
+                    rrule: None,
+                    uid: task.clone().uuid,
+                    summary: task.description.clone(),
+                    dtstamp: Utc::now(),
+                });
+                let uuid_new = uuid::Uuid::new_v4().to_string();
+                tasks_copy.push(Task {
+                    description: task.description.clone(),
+                    estimated: task.estimated - time_til,
+                    id: task.id,
+                    uuid: uuid_new.clone(),
+                    due: task.due,
+                    status: "unscheduled".to_string(),
+                    urgency: task.urgency,
+                });
+                start += time_til;
+                time_til = 0;
+                tasks_copy[idx].status = "scheduled".to_string();
+            } else {
+                blocks.push(TimeBlock {
+                    duration: Some(task.estimated),
+                    dtstart: start,
+                    summary: task.clone().description,
+                    dtend: None,
+                    dtstamp: Utc::now(),
+                    rrule: None,
+                    uid: task.clone().uuid,
+                });
+                start += task.clone().estimated;
+                time_til -= task.clone().estimated;
+                tasks_copy[idx].status = "scheduled".to_string();
+            }
         }
     }
-
     tasks_copy.retain(|x| x.status == "pending".to_string());
     let last_time_scheduled =
         blocks.last().unwrap().dtstart + blocks.last().unwrap().duration.unwrap();
