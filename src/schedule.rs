@@ -1,13 +1,16 @@
 use chrono::DateTime;
 use chrono::Local;
+use chrono::NaiveDateTime;
 use chrono::TimeZone;
 use chrono::Utc;
 use cronwave::structs::*;
+use icalendar::Event;
 use iso8601::duration;
 use reqwest::blocking::Client;
 use reqwest::header::*;
 use rrule::RRule;
 use rrule::RRuleSet;
+use serde_json::from_str;
 use std::fmt::format;
 use std::fs::File;
 use std::io::Read;
@@ -46,8 +49,6 @@ fn mark_all_tasks_scheduled() {
 
 pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeBlock>) {
     let mut tasks_copy = tasks.clone();
-
-    // with_virtual.sort_by(|a, b| a.dtstart.cmp(&b.dtstart));
     let time_line = Local::now().timestamp();
 
     blocks.retain(|x| {
@@ -58,17 +59,18 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
     let mut gaps = find_the_gaps(blocks.clone());
 
     gaps.retain(|x| x.end > time_line);
-    let mut uuid_vec: Vec<(String, usize)> = vec![];
-    // println!("tasks copy \n {:?} \n", tasks_copy);
     for gap in gaps {
         let mut start = gap.start;
         let mut time_til = gap.end - start;
 
         tasks_copy.sort_by_key(|x| x.due);
-        while let Some((idx, mut task)) = tasks_copy
+        while let Some((idx, task)) = tasks_copy
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.status != "scheduled".to_string())
+            .filter(|(_, t)| {
+                t.status != "scheduled".to_string()
+                    && (t.start.is_none() || start > t.start.unwrap())
+            })
             .min_by_key(|(_, t)| t.due)
         {
             if time_til == 0 {
@@ -93,6 +95,7 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
                     due: task.due,
                     status: "unscheduled".to_string(),
                     urgency: task.urgency,
+                    start: task.start,
                 });
                 start += time_til;
                 time_til = 0;
@@ -224,48 +227,46 @@ fn create_caldav_events(
             "DTSTAMP:{}",
             event.dtstamp.format("%Y%m%dT%H%M%SZ")
         ));
-        match event.duration {
-            Some(dur) => {
-                let hours = chrono::Duration::seconds(dur).num_hours() * 3600;
-                let minutes = chrono::Duration::seconds(dur - hours).num_minutes();
-                if hours == 0 {
-                    string_vec.push(format!(
-                        "DURATION:PT{}M",
-                        chrono::Duration::seconds(dur).num_minutes()
-                    ))
-                } else if minutes == 0 {
-                    string_vec.push(format!(
-                        "DURATION:PT{}H",
-                        chrono::Duration::seconds(dur).num_hours()
-                    ))
-                } else {
-                    string_vec.push(format!(
-                        "DURATION:PT{}H{}M",
-                        chrono::Duration::seconds(dur).num_hours(),
-                        chrono::Duration::seconds(dur - hours).num_minutes()
-                    ))
-                }
+        let dur = event.duration;
+        if dur.is_some() {
+            let hours = chrono::Duration::seconds(dur.unwrap()).num_hours() * 3600;
+            let minutes = chrono::Duration::seconds(dur.unwrap() - hours).num_minutes();
+            if hours == 0 {
+                string_vec.push(format!(
+                    "DURATION:PT{}M",
+                    chrono::Duration::seconds(dur.unwrap()).num_minutes()
+                ));
+            } else if minutes == 0 {
+                string_vec.push(format!(
+                    "DURATION:PT{}H",
+                    chrono::Duration::seconds(dur.unwrap()).num_hours()
+                ));
+            } else {
+                string_vec.push(format!(
+                    "DURATION:PT{}H{}M",
+                    chrono::Duration::seconds(dur.unwrap()).num_hours(),
+                    chrono::Duration::seconds(dur.unwrap() - hours).num_minutes()
+                ));
             }
-            None => (),
-        };
-        match event.dtend {
-            Some(dtend) => string_vec.push(format!(
+        }
+        if event.dtend.is_some() {
+            let dtend = event.dtend.unwrap();
+            string_vec.push(format!(
                 "DTEND:{}",
                 DateTime::from_timestamp(dtend, 0)
                     .unwrap()
                     .format("%Y%m%dT%H%M%S")
-            )),
-            None => (),
+            ));
         };
 
         string_vec.push(format!("SUMMARY:{}", event.summary));
-        match event.rrule {
-            Some(rrule) => string_vec.push(format!(
+        if event.rrule.is_some() {
+            let rrule = event.rrule.unwrap();
+            string_vec.push(format!(
                 "RRULE:FREQ={};UNTIL={}",
-                rrule.get_freq().to_string(),
+                rrule.get_freq(),
                 rrule.get_until().unwrap().format("%Y%m%dT%H%M%S")
-            )),
-            None => (),
+            ));
         }
         string_vec.push("END:VEVENT".to_string());
     }
@@ -324,6 +325,7 @@ pub fn reschedule(blocks: Vec<TimeBlock>, task_vec: Vec<Task>, config_data: Conf
             status: "pending".to_string(),
             urgency: matchingtask.urgency,
             due: matchingtask.due,
+            start: Some(task.dtstart),
         };
         tasks.push(task_from_block);
     }

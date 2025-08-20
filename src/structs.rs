@@ -2,7 +2,7 @@ use chrono::TimeZone;
 
 use chrono::{DateTime, Duration, Local, NaiveDateTime, Utc};
 use icalendar::DatePerhapsTime;
-use rrule::{RRule, Unvalidated, Validated};
+use rrule::{RRule, RRuleSet, Unvalidated, Validated};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
@@ -14,6 +14,7 @@ pub struct Task {
     pub estimated: i64,
     pub status: String,
     pub urgency: f32,
+    pub start: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +26,7 @@ pub struct RawTask {
     pub estimated: String,
     pub status: String,
     pub urgency: f32,
+    pub start: Option<String>,
 }
 
 #[derive(Debug)]

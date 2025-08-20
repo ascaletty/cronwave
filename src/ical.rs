@@ -3,12 +3,15 @@ use cronwave::structs::*;
 use ical::property::Property;
 use icalendar::{Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime};
 use iso8601_duration::Duration;
+use rrule::RRule;
+use rrule::RRuleSet;
 use std::fs::read_to_string;
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::Write;
 use std::process::Command;
 use std::str::FromStr;
+use tokio::task_local;
 
 fn week_and_day(week: u32, day: u32, year: i32) -> i64 {
     let start = Local::with_ymd_and_hms(&Local, year, 0, 0, 0, 0, 0)
@@ -77,6 +80,7 @@ pub fn fetch_tasks() -> Vec<Task> {
 
     let output_raw: Vec<RawTask> =
         serde_json::from_slice(&task_command.stdout).expect("invalid taskwarrior output");
+
     let mut output = vec![];
     for task in output_raw {
         let task_item = Task {
@@ -89,19 +93,23 @@ pub fn fetch_tasks() -> Vec<Task> {
             ),
             status: task.status,
             urgency: task.urgency,
+            start: if task.start.is_some() {
+                let naive =
+                    NaiveDateTime::parse_from_str(task.start.unwrap().as_str(), "%Y%m%dT%H%M%SZ")
+                        .unwrap();
+                Some(
+                    Local::from_local_datetime(&Local, &naive)
+                        .unwrap()
+                        .timestamp(),
+                )
+            } else {
+                None
+            },
         };
 
         task_uuid_vec.push(task_item.clone().uuid);
         output.push(task_item);
     }
-    writer
-        .write_all(task_uuid_vec.join(";").as_bytes())
-        .expect("failed to write ics");
-
-    output.sort_by(|a, b| a.due.cmp(&b.due));
-    // println!("TASKS OUTPUT");
-    // println!("output of fetch tasks{:?}", output);
-
     output
 }
 
@@ -129,18 +137,25 @@ pub fn fetch_tasks_scheduled() -> Vec<Task> {
             ),
             status: task.status,
             urgency: task.urgency,
+            start: if task.start.is_some() {
+                let naive =
+                    NaiveDateTime::parse_from_str(task.start.unwrap().as_str(), "%Y%m%dT%H%M%SZ")
+                        .unwrap();
+                Some(
+                    Local::from_local_datetime(&Local, &naive)
+                        .unwrap()
+                        .timestamp(),
+                )
+            } else {
+                None
+            },
         };
 
         task_uuid_vec.push(task_item.clone().uuid);
         output.push(task_item);
     }
-    writer
-        .write_all(task_uuid_vec.join(";").as_bytes())
-        .expect("failed to write ics");
 
     output.sort_by(|a, b| a.due.cmp(&b.due));
-    // println!("TASKS OUTPUT");
-    // println!("output of fetch tasks{:?}", output);
 
     output
 }
