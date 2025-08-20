@@ -5,7 +5,8 @@ pushes the new changes.
 ## **Feature list/Roadmap**
 - [x] sync with private caldav servers such as Radicale
 - [x] recurring events
-- [ ] rescheduling feature that allows you to create new events and have your tasks move around them
+- [x] rescheduling feature that allows you to create new events and have your tasks move around them
+- [x] delete function than completes your tasks and removes them from your calendar
 - [ ] recurring tasks
 - [ ] google/apple calendar support
 - [ ] ui
