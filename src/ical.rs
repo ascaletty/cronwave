@@ -9,6 +9,7 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::process::Command;
 use std::str::FromStr;
+
 fn week_and_day(week: u32, day: u32, year: i32) -> i64 {
     let start = Local::with_ymd_and_hms(&Local, year, 0, 0, 0, 0, 0)
         .unwrap()
@@ -79,6 +80,7 @@ pub fn fetch_tasks() -> Vec<Task> {
     let mut output = vec![];
     for task in output_raw {
         let task_item = Task {
+            id: task.id,
             uuid: task.uuid,
             description: task.description,
             due: convert_iso8601_to_timestamp(iso8601::DateTime::from_str(&task.due).unwrap()),
@@ -118,6 +120,7 @@ pub fn fetch_tasks_scheduled() -> Vec<Task> {
     let mut output = vec![];
     for task in output_raw {
         let task_item = Task {
+            id: task.id,
             uuid: task.uuid,
             description: task.description,
             due: convert_iso8601_to_timestamp(iso8601::DateTime::from_str(&task.due).unwrap()),
@@ -144,10 +147,10 @@ pub fn fetch_tasks_scheduled() -> Vec<Task> {
 pub fn fetch_ical_text(config_data: ConfigInfo) {
     let client = reqwest::blocking::Client::new();
     let response = client
-        .get(config_data.auth.cal_url)
+        .get(config_data.basic.cal_url)
         .basic_auth(
-            config_data.auth.cal_username,
-            Some(config_data.auth.cal_pass),
+            config_data.basic.cal_username,
+            Some(config_data.basic.cal_pass),
         )
         .send()
         .expect("failed to fetch ical");

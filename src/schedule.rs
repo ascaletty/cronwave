@@ -6,6 +6,7 @@ use cronwave::structs::*;
 use iso8601::duration;
 use reqwest::blocking::Client;
 use reqwest::header::*;
+use rrule::RRule;
 use rrule::RRuleSet;
 use std::fmt::format;
 use std::fs::File;
@@ -52,7 +53,9 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
     let time_line = Local::now().timestamp();
 
     blocks.retain(|x| {
-        x.dtstart + x.duration.unwrap_or(0) > time_line || x.dtend.unwrap_or(0) > time_line
+        x.dtstart + x.duration.unwrap_or(0) > time_line
+            || x.dtend.unwrap_or(0) > time_line
+            || x.rrule.is_some()
     });
     let mut gaps = find_the_gaps(blocks.clone());
 
@@ -260,10 +263,10 @@ fn create_caldav_events(
 
     // Send the PUT request with basic auth
     let response = client
-        .put(config_data.auth.cal_url)
+        .put(config_data.basic.cal_url)
         .basic_auth(
-            config_data.auth.cal_username,
-            Some(config_data.auth.cal_pass),
+            config_data.basic.cal_username,
+            Some(config_data.basic.cal_pass),
         )
         .headers(headers)
         .body(combined)
@@ -296,6 +299,7 @@ pub fn reschedule(blocks: Vec<TimeBlock>, task_vec: Vec<Task>, config_data: Conf
             .find(|x| x.uuid == task.uid)
             .expect("couldnt find matching task");
         let task_from_block = Task {
+            id: 0,
             estimated: task.duration.unwrap(),
             uuid: task.uid,
             description: task.summary,

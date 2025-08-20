@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct Task {
+    pub id: usize,
     pub uuid: String,
     pub description: String,
     pub due: i64,
@@ -17,6 +18,7 @@ pub struct Task {
 
 #[derive(Debug, Deserialize)]
 pub struct RawTask {
+    pub id: usize,
     pub uuid: String,
     pub description: String,
     pub due: String,
@@ -76,15 +78,19 @@ impl Gap {
 // }
 
 #[derive(Deserialize, Clone, Serialize, Debug)]
-pub struct auth {
+pub struct basic {
     pub cal_url: String,
     pub cal_username: String,
     pub cal_pass: String,
 }
+pub struct oath2 {
+    pub client_id: String,
+    pub client_secret: String,
+}
 
 #[derive(Deserialize, Clone, Serialize, Debug)]
 pub struct ConfigInfo {
-    pub auth: auth,
+    pub basic: basic,
     pub main: main,
 }
 
@@ -95,7 +101,7 @@ pub struct main {
 impl ::std::default::Default for ConfigInfo {
     fn default() -> Self {
         Self {
-            auth: auth {
+            basic: basic {
                 cal_url: "your cal url".to_string(),
                 cal_username: "your cal_username".to_string(),
                 cal_pass: "your cal password".to_string(),
