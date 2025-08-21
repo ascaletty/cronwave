@@ -12,6 +12,14 @@ pushes the new changes.
 - [ ] ui
 - [ ] more advanced ai/monte carlo simulation scheduling algorithm
 - [ ] integration with [mcps](https://github.com/swaits/mcps)
+#### Installation
+```
+git clone https://github.com/ascaletty/cronwave 
+cd cronwave
+cargo build --release
+cd target/release
+sudo cp cronwave /usr/bin/
+```
 ### Contribution
 Contributions are more than welcome.
 
