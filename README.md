@@ -7,7 +7,7 @@ pushes the new changes.
 - [x] recurring events
 - [x] rescheduling feature that allows you to create new events and have your tasks move around them
 - [x] delete function than completes your tasks and removes them from your calendar
-- [ ] recurring tasks
+- [x] tasks that start after a specific date. 
 - [ ] google/apple calendar support
 - [ ] ui
 - [ ] more advanced ai/monte carlo simulation scheduling algorithm

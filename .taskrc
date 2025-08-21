@@ -37,7 +37,6 @@ uda.scheduling.label=Scheduling
 uda.min_block.type=numeric
 uda.min_block.label=Minimum Time Block
 uda.min_block.default=2
-recurrence.confirmation=no
 report.ready.columns=id,start.age,entry.age,depends.indicator,priority,project,tags,recur.indicator,scheduled.relative,due.relative,until.remaining,description,urgency
 journal.info=0
 urgency.inherit=1
@@ -45,8 +44,7 @@ urgency.blocked.coefficient=0
 urgency.blocking.coefficient=0
 urgency.waiting.coefficient=0
 urgency.scheduled.coefficient=0
-uda.scheduled_status.type=string
-uda.scheduled_status.label=Scheduled Status
-uda.scheduled_status.values=unscheduled,scheduled
-default.scheduled_status= unscheduled
+uda.date.type= date
+uda.date.label= date
+
 
