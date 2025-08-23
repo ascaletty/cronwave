@@ -1,6 +1,7 @@
 mod config;
 mod ical;
 mod schedule;
+mod ui;
 
 use clap::Parser;
 use clap_derive::Parser as Parser_derive;
@@ -16,7 +17,6 @@ fn main() {
     let args = Args::try_parse().unwrap();
 
     let config_info = config::get_config();
-
     let config_data = config_info.expect("failed to get config info");
     let tasks = ical::fetch_tasks();
     let tasks_scheduled = ical::fetch_tasks_scheduled();
@@ -32,6 +32,9 @@ fn main() {
             args.second_arg.expect("expected task id to delete"),
             timeblock,
         ),
+        "ui" => {
+            ui::ui(timeblock);
+        }
         _ => (),
     }
 }

@@ -1,25 +1,12 @@
 use chrono::DateTime;
 use chrono::Local;
-use chrono::NaiveDateTime;
 use chrono::TimeZone;
 use chrono::Utc;
 use cronwave::structs::*;
-use icalendar::Event;
-use iso8601::duration;
 use reqwest::blocking::Client;
 use reqwest::header::*;
-use rrule::RRule;
 use rrule::RRuleSet;
-use serde_json::from_str;
-use std::fmt::format;
-use std::fs::File;
-use std::io::Read;
-use std::os::unix::process::CommandExt;
 use std::process::Command;
-
-use std::io::Write;
-use std::process::Stdio;
-use std::task;
 
 fn mark_all_tasks_scheduled() {
     let count = Command::new("task")
@@ -44,11 +31,11 @@ fn mark_all_tasks_scheduled() {
             .arg("-unscheduled")
             .status()
             .expect("failed to run command");
+        println!("result={}", result);
     }
 }
 
-pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeBlock>) {
-    let mut tasks_copy = tasks.clone();
+pub fn schedule(mut tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeBlock>) {
     let time_line = Local::now().timestamp();
 
     blocks.retain(|x| {
@@ -56,15 +43,15 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
             || x.dtend.unwrap_or(0) > time_line
             || x.rrule.is_some()
     });
-    let mut gaps = find_the_gaps(blocks.clone());
+    let mut gaps = find_the_gaps(&mut blocks);
 
     gaps.retain(|x| x.end > time_line);
     for gap in gaps {
         let mut start = gap.start;
         let mut time_til = gap.end - start;
-
-        tasks_copy.sort_by_key(|x| x.due);
-        while let Some((idx, task)) = tasks_copy
+        //need to sort tasks by due date still
+        tasks.sort_by_key(|x| x.due);
+        while let Some((idx, task)) = tasks
             .iter()
             .enumerate()
             .filter(|(_, t)| {
@@ -82,16 +69,15 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
                     dtstart: start,
                     dtend: None,
                     rrule: None,
-                    uid: task.clone().uuid,
+                    uid: task.uuid.clone(),
                     summary: task.description.clone(),
                     dtstamp: Utc::now(),
                 });
-                let uuid_new = uuid::Uuid::new_v4().to_string();
-                tasks_copy.push(Task {
+                tasks.push(Task {
                     description: task.description.clone(),
                     estimated: task.estimated - time_til,
                     id: task.id,
-                    uuid: uuid_new.clone(),
+                    uuid: task.uuid.clone(),
                     due: task.due,
                     status: "unscheduled".to_string(),
                     urgency: task.urgency,
@@ -99,28 +85,28 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
                 });
                 start += time_til;
                 time_til = 0;
-                tasks_copy[idx].status = "scheduled".to_string();
+                tasks[idx].status = "scheduled".to_string();
             } else {
                 blocks.push(TimeBlock {
                     duration: Some(task.estimated),
                     dtstart: start,
-                    summary: task.clone().description,
+                    summary: task.description.clone(),
                     dtend: None,
                     dtstamp: Utc::now(),
                     rrule: None,
-                    uid: task.clone().uuid,
+                    uid: task.uuid.clone(),
                 });
-                start += task.clone().estimated;
-                time_til -= task.clone().estimated;
-                tasks_copy[idx].status = "scheduled".to_string();
+                start += task.estimated;
+                time_til -= task.estimated;
+                tasks[idx].status = "scheduled".to_string();
             }
         }
     }
-    tasks_copy.retain(|x| x.status == "pending".to_string());
+    tasks.retain(|x| x.status == "pending".to_string());
     let last_time_scheduled =
         blocks.last().unwrap().dtstart + blocks.last().unwrap().duration.unwrap();
     let mut time_line_after = last_time_scheduled;
-    for task in tasks_copy {
+    for task in tasks.as_slice() {
         if time_line_after > task.due {
             println!("task will not be completed in time");
         }
@@ -129,7 +115,7 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
             dtstart: time_line_after,
             dtend: None,
             rrule: None,
-            uid: task.uuid,
+            uid: task.uuid.clone(),
             dtstamp: Utc::now(),
             summary: task.description.clone(),
         });
@@ -147,7 +133,7 @@ pub fn schedule(tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<TimeB
         }
     }
 }
-fn find_the_gaps(blocks: Vec<TimeBlock>) -> Vec<Gap> {
+fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
     let mut gap_vec = vec![];
 
     // Expand recurrences into actual blocks first
@@ -162,6 +148,7 @@ fn find_the_gaps(blocks: Vec<TimeBlock>) -> Vec<Gap> {
                 .with_timezone(&tz);
 
             let rruleset = RRuleSet::new(start_tz).rrule(rrule);
+
             for time in rruleset.all_unchecked() {
                 let mut b = block.clone();
                 b.dtstart = time.timestamp();
@@ -172,7 +159,7 @@ fn find_the_gaps(blocks: Vec<TimeBlock>) -> Vec<Gap> {
                 expanded_blocks.push(b);
             }
         } else {
-            expanded_blocks.push(block);
+            expanded_blocks.push(block.clone());
         }
     }
 
@@ -258,7 +245,6 @@ fn create_caldav_events(
                     .format("%Y%m%dT%H%M%S")
             ));
         };
-
         string_vec.push(format!("SUMMARY:{}", event.summary));
         if event.rrule.is_some() {
             let rrule = event.rrule.unwrap();
@@ -280,12 +266,12 @@ fn create_caldav_events(
 
     let client = Client::new();
 
-    // Send the PUT request with basic auth
+    // Send the PUT request with Basic auth
     let response = client
-        .put(config_data.basic.cal_url)
+        .put(config_data.Basic.cal_url)
         .basic_auth(
-            config_data.basic.cal_username,
-            Some(config_data.basic.cal_pass),
+            config_data.Basic.cal_username,
+            Some(config_data.Basic.cal_pass),
         )
         .headers(headers)
         .body(combined)
@@ -304,9 +290,9 @@ pub fn reschedule(blocks: Vec<TimeBlock>, task_vec: Vec<Task>, config_data: Conf
     let mut tasks_block = vec![];
     let mut events = vec![];
     let mut tasks = vec![];
-    for block in blocks.clone() {
-        if let Some(uuid_match) = task_vec.iter().find(|x| x.uuid == block.uid) {
-            tasks_block.push(block.clone());
+    for block in blocks {
+        if let Some(_uuid_match) = task_vec.iter().find(|x| x.uuid == block.uid) {
+            tasks_block.push(block);
         } else {
             events.push(block);
         }
@@ -329,5 +315,5 @@ pub fn reschedule(blocks: Vec<TimeBlock>, task_vec: Vec<Task>, config_data: Conf
         };
         tasks.push(task_from_block);
     }
-    schedule(tasks.clone(), config_data, events);
+    schedule(tasks, config_data, events);
 }

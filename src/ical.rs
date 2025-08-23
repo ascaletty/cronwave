@@ -73,11 +73,6 @@ pub fn fetch_tasks() -> Vec<Task> {
         .args(["status:pending", "+unscheduled", "export"])
         .output()
         .expect("failed to run task export");
-    let mut task_uuid_vec = vec![];
-
-    let uuids = File::create("uuids.txt").unwrap();
-    let mut writer = BufWriter::new(uuids);
-
     let output_raw: Vec<RawTask> =
         serde_json::from_slice(&task_command.stdout).expect("invalid taskwarrior output");
 
@@ -107,7 +102,6 @@ pub fn fetch_tasks() -> Vec<Task> {
             },
         };
 
-        task_uuid_vec.push(task_item.clone().uuid);
         output.push(task_item);
     }
     output
@@ -118,10 +112,6 @@ pub fn fetch_tasks_scheduled() -> Vec<Task> {
         .args(["status:pending", "+scheduled", "export"])
         .output()
         .expect("failed to run task export");
-    let mut task_uuid_vec = vec![];
-
-    let uuids = File::create("uuids.txt").unwrap();
-    let mut writer = BufWriter::new(uuids);
 
     let output_raw: Vec<RawTask> =
         serde_json::from_slice(&task_command.stdout).expect("invalid taskwarrior output");
@@ -151,7 +141,6 @@ pub fn fetch_tasks_scheduled() -> Vec<Task> {
             },
         };
 
-        task_uuid_vec.push(task_item.clone().uuid);
         output.push(task_item);
     }
 
@@ -162,10 +151,10 @@ pub fn fetch_tasks_scheduled() -> Vec<Task> {
 pub fn fetch_ical_text(config_data: ConfigInfo) {
     let client = reqwest::blocking::Client::new();
     let response = client
-        .get(config_data.basic.cal_url)
+        .get(config_data.Basic.cal_url)
         .basic_auth(
-            config_data.basic.cal_username,
-            Some(config_data.basic.cal_pass),
+            config_data.Basic.cal_username,
+            Some(config_data.Basic.cal_pass),
         )
         .send()
         .expect("failed to fetch ical");
@@ -176,7 +165,7 @@ pub fn fetch_ical_text(config_data: ConfigInfo) {
         .write_all(response.text().unwrap().as_bytes())
         .expect("failed to write ics");
 }
-pub fn parse_ical_blocks<'b>() -> Vec<TimeBlock> {
+pub fn parse_ical_blocks() -> Vec<TimeBlock> {
     let contents = read_to_string("school.ics").expect("couldnt read school.ics");
     let parsed_calendar: Calendar = contents.parse().unwrap();
     let mut timebloc_vec = vec![];
@@ -277,6 +266,6 @@ pub fn parse_ical_blocks<'b>() -> Vec<TimeBlock> {
             });
         }
     }
-    println!("print blocks{:?}", timebloc_vec);
+    timebloc_vec.sort_by_key(|x| x.dtstart);
     timebloc_vec
 }

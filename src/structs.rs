@@ -64,23 +64,8 @@ impl Gap {
         }
     }
 }
-// impl TimeBlock {
-//     pub fn last(last_block: i64, greatest_duration: i64) -> Self {
-//         Self {
-//             duration: Some(greatest_duration),
-//             dtstart: last_block,
-//             summary: "last".to_string(),
-//             uid: "615d0917-2955-4f3e-ae21-ca0f72bdc48a".to_string(),
-//             dtstamp: Utc::now(),
-//             dtend: None,
-//             rrule: None,
-//             class: None,
-//         }
-//     }
-// }
-
 #[derive(Deserialize, Clone, Serialize, Debug)]
-pub struct basic {
+pub struct Basic {
     pub cal_url: String,
     pub cal_username: String,
     pub cal_pass: String,
@@ -92,23 +77,25 @@ pub struct oath2 {
 
 #[derive(Deserialize, Clone, Serialize, Debug)]
 pub struct ConfigInfo {
-    pub basic: basic,
+    pub Basic: Basic,
     pub main: main,
 }
 
 #[derive(Deserialize, Clone, Serialize, Debug)]
 pub struct main {
-    pub days_ahead: i64,
+    pub days_ahead: Option<i64>,
 }
 impl ::std::default::Default for ConfigInfo {
     fn default() -> Self {
         Self {
-            basic: basic {
+            Basic: Basic {
                 cal_url: "your cal url".to_string(),
                 cal_username: "your cal_username".to_string(),
                 cal_pass: "your cal password".to_string(),
             },
-            main: main { days_ahead: 365 },
+            main: main {
+                days_ahead: Some(365),
+            },
         }
     }
 }
