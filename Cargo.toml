@@ -21,4 +21,11 @@ rrule = "0.14.0"
 clap_derive = { version = "4.0.0-rc.1" }
 clap = "4.5.45"
 oauth2 = "5.0.0"
+ratatui = {version="0.29.0", features=["widget-calendar"]}
+crossterm = "0.29.0"
+color-eyre = "0.6.5"
+itertools = "0.14.0"
+scraper = "0.24.0"
+regex = "1.11.2"
+inquire = "0.7.5"
 

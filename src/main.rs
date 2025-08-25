@@ -2,6 +2,10 @@ mod config;
 mod ical;
 mod schedule;
 mod ui;
+mod whentomeet;
+
+use inquire::Text;
+use std::any::Any;
 
 use clap::Parser;
 use clap_derive::Parser as Parser_derive;
@@ -34,6 +38,14 @@ fn main() {
         ),
         "ui" => {
             ui::ui(timeblock);
+        }
+        "meet" => {
+            let url = Text::new("url of when2meet").prompt().unwrap();
+            let name = Text::new("name").prompt().unwrap();
+            let pass = Text::new("pass").prompt().unwrap();
+
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async { whentomeet::meet(url, name, pass, timeblock).await });
         }
         _ => (),
     }

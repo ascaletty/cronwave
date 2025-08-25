@@ -8,6 +8,7 @@ pushes the new changes. Check out my [blog](https://aaron.scaletty.com/posts/cro
 - [x] rescheduling feature that allows you to create new events and have your tasks move around them
 - [x] delete function than completes your tasks and removes them from your calendar
 - [x] tasks that start after a specific date. 
+- [x] filling out a whentomeet based on the events you have scheduled
 - [ ] google/apple calendar support
 - [ ] ui
 - [ ] more advanced ai/monte carlo simulation scheduling algorithm

@@ -83,7 +83,7 @@ pub struct ConfigInfo {
 
 #[derive(Deserialize, Clone, Serialize, Debug)]
 pub struct main {
-    pub days_ahead: Option<i64>,
+    pub days_ahead: i64,
 }
 impl ::std::default::Default for ConfigInfo {
     fn default() -> Self {
@@ -93,9 +93,7 @@ impl ::std::default::Default for ConfigInfo {
                 cal_username: "your cal_username".to_string(),
                 cal_pass: "your cal password".to_string(),
             },
-            main: main {
-                days_ahead: Some(365),
-            },
+            main: main { days_ahead: 365 },
         }
     }
 }
