@@ -77,7 +77,7 @@ pub fn schedule(mut tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<T
                     description: task.description.clone(),
                     estimated: task.estimated - time_til,
                     id: task.id,
-                    uuid: task.uuid.clone(),
+                    uuid: uuid::Uuid::new_v4().to_string(),
                     due: task.due,
                     status: "unscheduled".to_string(),
                     urgency: task.urgency,
@@ -162,15 +162,21 @@ fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
             expanded_blocks.push(block.clone());
         }
     }
-
     expanded_blocks.sort_by_key(|b| b.dtstart);
+
     let now = Local::now().timestamp();
-    if let Some(first) = expanded_blocks.first() {
-        if now < first.dtstart {
-            gap_vec.push(Gap {
-                start: now,
-                end: first.dtstart,
-            });
+    if let Some(first) = expanded_blocks.first_mut() {
+        if first.dtstart < now {
+            first.dtstart = now;
+            if let Some(dur) = first.duration {
+                first.dtend = Some(first.dtstart + dur);
+            } else if let Some(end) = first.dtend {
+                // If dtend existed, make sure it's still >= dtstart
+                if end < now {
+                    // The whole block is in the past → drop it
+                    expanded_blocks.remove(0);
+                }
+            }
         }
     }
 

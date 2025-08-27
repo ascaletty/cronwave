@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use cronwave::structs::*;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, COOKIE, ORIGIN, REFERER, USER_AGENT};
@@ -126,6 +126,9 @@ fn get_blocks(mut startday: i64, mut endday: i64, blocks_per_day: usize) -> Vec<
 
     endday += 900;
 
+    let used_secs_per_day = blocks_per_day as i64 * 900;
+
+    let time_til_morn = 86_400 - used_secs_per_day; // leftover per day
     println!(
         "startday={}",
         Local::timestamp_opt(&Local, startday, 0).unwrap()
@@ -134,17 +137,23 @@ fn get_blocks(mut startday: i64, mut endday: i64, blocks_per_day: usize) -> Vec<
         "endday={}",
         Local::timestamp_opt(&Local, endday, 0).unwrap()
     );
+    println!(
+        "time_til_morn{}",
+        Duration::seconds(time_til_morn).num_hours()
+    );
     while startday < endday {
-        for _i in 0..blocks_per_day {
+        let mut i = 0;
+        while i < blocks_per_day {
             let gap = Gap {
                 start: startday,
                 end: startday + 900,
             };
             startday = gap.end;
             gap_vec.push(gap);
+            i += 1;
         }
-        //get to the start of the next day at 8am
-        startday += 36000;
+        //get to the start of the next day
+        startday += time_til_morn;
     }
     println!("gapvec length{}", gap_vec.len());
     gap_vec
