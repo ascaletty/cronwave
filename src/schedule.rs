@@ -2,11 +2,13 @@ use chrono::DateTime;
 use chrono::Local;
 use chrono::TimeZone;
 use chrono::Utc;
+use color_eyre::owo_colors::colors::xterm;
 use cronwave::structs::*;
 use reqwest::blocking::Client;
 use reqwest::header::*;
 use rrule::RRuleSet;
 use std::process::Command;
+use std::thread::current;
 
 fn mark_all_tasks_scheduled() {
     let count = Command::new("task")
@@ -102,26 +104,30 @@ pub fn schedule(mut tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<T
             }
         }
     }
-    tasks.retain(|x| x.status == "pending".to_string());
-    let last_time_scheduled =
-        blocks.last().unwrap().dtstart + blocks.last().unwrap().duration.unwrap();
-    let mut time_line_after = last_time_scheduled;
-    for task in tasks.as_slice() {
-        if time_line_after > task.due {
-            println!("task will not be completed in time");
-        }
-        blocks.push(TimeBlock {
-            duration: Some(task.estimated),
-            dtstart: time_line_after,
-            dtend: None,
-            rrule: None,
-            uid: task.uuid.clone(),
-            dtstamp: Utc::now(),
-            summary: task.description.clone(),
-        });
-        //update time_line_after
-        time_line_after += task.estimated
-    }
+    // let last_block = blocks.last().unwrap();
+    // let last_time_scheduled = match last_block.duration {
+    //     Some(dur) => last_block.dtstart + dur,
+    //     None => last_block.dtend.unwrap(),
+    // };
+    // let mut time_line_after = last_time_scheduled;
+    //
+    // tasks.retain(|x| x.status == "pending".to_string());
+    // for task in tasks.as_slice() {
+    //     if time_line_after > task.due {
+    //         println!("task will not be completed in time");
+    //     }
+    //     blocks.push(TimeBlock {
+    //         duration: Some(task.estimated),
+    //         dtstart: time_line_after,
+    //         dtend: None,
+    //         rrule: None,
+    //         uid: task.uuid.clone(),
+    //         dtstamp: Utc::now(),
+    //         summary: task.description.clone(),
+    //     });
+    //     //update time_line_after
+    //     time_line_after += task.estimated
+    // }
 
     match create_caldav_events(config_data, blocks) {
         Ok(_) => {
@@ -133,6 +139,32 @@ pub fn schedule(mut tasks: Vec<Task>, config_data: ConfigInfo, mut blocks: Vec<T
         }
     }
 }
+
+fn split_gap_into_days(mut start: i64, end: i64, gaps: &mut Vec<Gap>) {
+    while start < end {
+        let start_dt = Local.timestamp_opt(start, 0).unwrap();
+        let next_day_start = start_dt
+            .date_naive()
+            .succ_opt()
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let next_day_ts = Local
+            .from_local_datetime(&next_day_start)
+            .unwrap()
+            .timestamp();
+
+        let chunk_end = std::cmp::min(end, next_day_ts);
+
+        gaps.push(Gap {
+            start,
+            end: chunk_end,
+        });
+
+        start = chunk_end;
+    }
+}
+
 fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
     let mut gap_vec = vec![];
 
@@ -165,37 +197,42 @@ fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
     expanded_blocks.sort_by_key(|b| b.dtstart);
 
     let now = Local::now().timestamp();
-    if let Some(first) = expanded_blocks.first_mut() {
-        if first.dtstart < now {
-            first.dtstart = now;
-            if let Some(dur) = first.duration {
-                first.dtend = Some(first.dtstart + dur);
-            } else if let Some(end) = first.dtend {
-                // If dtend existed, make sure it's still >= dtstart
-                if end < now {
-                    // The whole block is in the past → drop it
-                    expanded_blocks.remove(0);
-                }
-            }
-        }
-    }
+    println!("time is {}", Local::now());
+    expanded_blocks.retain(|x| {
+        let end = match x.duration {
+            Some(dur) => dur + x.dtstart,
+            None => x.dtend.unwrap(),
+        };
+        end > now
+    });
+    expanded_blocks.first_mut().unwrap().dtstart = now;
+    println!("\nexpanded_blocks{:?}\n", expanded_blocks);
 
     // Walk through and find gaps between consecutive blocks
     for w in expanded_blocks.windows(2) {
         let current = &w[0];
         let next = &w[1];
-
         let current_end = match current.duration {
             Some(dur) => current.dtstart + dur,
-            None => current.dtend.unwrap_or(current.dtstart),
+            None => current.dtend.unwrap(),
         };
+        println!(
+            "block:{}, block_end:{}, next start:{}",
+            current.summary,
+            Local::timestamp_opt(&Local, current_end, 0).unwrap(),
+            Local::timestamp_opt(&Local, next.dtstart, 0).unwrap()
+        );
 
-        if current_end < next.dtstart {
-            gap_vec.push(Gap {
-                start: current_end,
-                end: next.dtstart,
-            });
+        if current_end < next.dtstart && current_end > now {
+            split_gap_into_days(current_end, next.dtstart, &mut gap_vec);
         }
+    }
+    for gap in gap_vec.clone() {
+        println!(
+            "gap from {} to {}",
+            Local::timestamp_opt(&Local, gap.start, 0).unwrap(),
+            Local::timestamp_opt(&Local, gap.end, 0).unwrap()
+        );
     }
     gap_vec
 }
@@ -292,34 +329,24 @@ fn create_caldav_events(
     }
 }
 
-pub fn reschedule(blocks: Vec<TimeBlock>, task_vec: Vec<Task>, config_data: ConfigInfo) {
+pub fn reschedule(blocks: Vec<TimeBlock>, mut task_vec: Vec<Task>, config_data: ConfigInfo) {
     let mut tasks_block = vec![];
+
     let mut events = vec![];
-    let mut tasks = vec![];
-    for block in blocks {
-        if let Some(_uuid_match) = task_vec.iter().find(|x| x.uuid == block.uid) {
+    for block in blocks.clone() {
+        if let Some(_uuid_match) = task_vec.iter().find(|x| x.description == block.summary) {
             tasks_block.push(block);
         } else {
             events.push(block);
         }
     }
-
-    for task in tasks_block {
-        let matchingtask = task_vec
-            .iter()
-            .find(|x| x.uuid == task.uid)
-            .expect("couldnt find matching task");
-        let task_from_block = Task {
-            id: 0,
-            estimated: task.duration.unwrap(),
-            uuid: task.uid,
-            description: task.summary,
-            status: "pending".to_string(),
-            urgency: matchingtask.urgency,
-            due: matchingtask.due,
-            start: Some(task.dtstart),
-        };
-        tasks.push(task_from_block);
+    for task in tasks_block.as_slice() {
+        if let Some(existing) = task_vec.iter_mut().find(|x| x.description == task.summary) {
+            existing.start = Some(task.dtstart);
+            existing.estimated = task.duration.unwrap();
+        }
     }
-    schedule(tasks, config_data, events);
+
+    print!("timeblocks found from tasks{:?}", tasks_block);
+    schedule(task_vec, config_data, events);
 }

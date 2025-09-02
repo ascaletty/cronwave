@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone};
 use cronwave::structs::*;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, COOKIE, ORIGIN, REFERER, USER_AGENT};
@@ -123,6 +123,9 @@ fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
 }
 fn get_blocks(mut startday: i64, mut endday: i64, blocks_per_day: usize) -> Vec<Gap> {
     let mut gap_vec = vec![];
+    let start = Local::timestamp_opt(&Local, startday, 0).unwrap();
+    let start_day = start.day();
+    if start.year() < Local::now().year() - 1 {}
 
     endday += 900;
 
