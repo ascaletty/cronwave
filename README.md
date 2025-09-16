@@ -24,7 +24,7 @@ sudo cp cronwave /usr/bin/
 ### Contribution
 Contributions are more than welcome.
 
-
+TODO: error with the last task not being marked scheduled and error with the rescheduling function not finding tasks
 
 
 

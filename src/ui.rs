@@ -17,7 +17,10 @@ use ratatui::{
     style::Stylize,
     symbols::border,
     text::{Line, Text},
-    widgets::{Block, Cell, Paragraph, Widget},
+    widgets::{
+        canvas::{Canvas, Circle, Line as CanvasLine},
+        Block, Cell, Paragraph, Widget,
+    },
     DefaultTerminal, Frame,
 };
 use ratatui::{
@@ -182,36 +185,20 @@ impl Cal {
         let left_b = focused_block("left", matches!(self.focus, Focus::Left));
         let top_b = focused_block("top", matches!(self.focus, Focus::Top));
         let brendan = focused_block("bottom", matches!(self.focus, Focus::Bottom));
-        let mut rows = Vec::new();
-        let header = Row::new(vec!["Summary", "Start", "End"]);
-        let timeline = Local::now().timestamp();
-        for event in &self.events {
-            let time = DateTime::from_timestamp(event.dtstart, 0).unwrap();
-
-            rows.push(Row::new(vec![
-                event.summary.clone(),
-                chrono::DateTime::from_timestamp(event.dtstart, 0)
-                    .unwrap()
-                    .to_string(),
-                chrono::DateTime::from_timestamp(event.dtstart + event.duration.unwrap(), 0)
-                    .unwrap()
-                    .to_string(),
-            ]));
-        }
+        let time = Local::now().timestamp();
 
         let widths = [
             Constraint::Percentage(33),
             Constraint::Percentage(33),
             Constraint::Percentage(34),
         ];
-
-        let table = Table::new(rows, widths)
-            .block(left_b)
-            .header(header)
-            .highlight_symbol(">>");
-        frame.render_widget(top_b, top_right);
+        let clock_cir = Circle {
+            x: 50.0,
+            y: 50.0,
+            radius: 20.0,
+            color: Color::Cyan,
+        };
         frame.render_widget(p, bar);
-        frame.render_stateful_widget(table, left, &mut self.tablestate);
         frame.render_widget(brendan, bottom_right);
     }
 

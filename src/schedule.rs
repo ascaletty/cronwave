@@ -197,7 +197,7 @@ fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
     expanded_blocks.sort_by_key(|b| b.dtstart);
 
     let now = Local::now().timestamp();
-    println!("time is {}", Local::now());
+    println!("time is {}", Local::timestamp_opt(&Local, now, 0).unwrap());
     expanded_blocks.retain(|x| {
         let end = match x.duration {
             Some(dur) => dur + x.dtstart,
@@ -205,9 +205,6 @@ fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
         };
         end > now
     });
-    expanded_blocks.first_mut().unwrap().dtstart = now;
-    println!("\nexpanded_blocks{:?}\n", expanded_blocks);
-
     // Walk through and find gaps between consecutive blocks
     for w in expanded_blocks.windows(2) {
         let current = &w[0];
@@ -223,9 +220,7 @@ fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
             Local::timestamp_opt(&Local, next.dtstart, 0).unwrap()
         );
 
-        if current_end < next.dtstart && current_end > now {
-            split_gap_into_days(current_end, next.dtstart, &mut gap_vec);
-        }
+        split_gap_into_days(current_end, next.dtstart, &mut gap_vec);
     }
     for gap in gap_vec.clone() {
         println!(
@@ -234,6 +229,7 @@ fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
             Local::timestamp_opt(&Local, gap.end, 0).unwrap()
         );
     }
+    gap_vec.first_mut().unwrap().start = now;
     gap_vec
 }
 
