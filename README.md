@@ -25,6 +25,7 @@ sudo cp cronwave /usr/bin/
 Contributions are more than welcome.
 
 TODO: error with the last task not being marked scheduled and error with the rescheduling function not finding tasks
+Bug where when rescheduling it moves the item needing to be scheduled foward instead of backward
 
 
 

@@ -2,6 +2,7 @@ use chrono::DateTime;
 use chrono::Local;
 use chrono::TimeZone;
 use chrono::Utc;
+use color_eyre::owo_colors::colors::css::SpringGreen;
 use color_eyre::owo_colors::colors::xterm;
 use cronwave::structs::*;
 use reqwest::blocking::Client;
@@ -229,7 +230,15 @@ fn find_the_gaps(blocks: &mut Vec<TimeBlock>) -> Vec<Gap> {
             Local::timestamp_opt(&Local, gap.end, 0).unwrap()
         );
     }
-    gap_vec.first_mut().unwrap().start = now;
+    //if we are in a block then set the time of the first gap to now
+    let first = expanded_blocks.first().unwrap();
+    let first_end = match first.duration {
+        Some(dur) => first.dtstart + dur,
+        None => first.dtend.unwrap(),
+    };
+    if first.dtstart > now && first_end > now {
+        gap_vec.first_mut().unwrap().start = now;
+    }
     gap_vec
 }
 
